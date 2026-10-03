@@ -76,35 +76,36 @@ def call_gemini(prompt_text, key):
     try:
         client = genai.Client(api_key=key)
         
-        target_model = st.session_state.get("active_model")
-        if not target_model:
-            preferred_order = [
-                "gemini-2.5-flash",
-                "gemini-2.0-flash",
-                "gemini-1.5-flash",
-                "gemini-1.5-pro"
-            ]
-            try:
-                available = [m.name for m in client.models.list()]
-                for target in preferred_order:
-                    for m_name in available:
-                        if target in m_name:
-                            target_model = m_name
-                            break
-                    if target_model:
-                        break
-            except Exception:
-                target_model = "gemini-2.5-flash"
-                
-            if not target_model:
-                target_model = "gemini-2.5-flash"
-            st.session_state["active_model"] = target_model
+        TARGET_MODEL = "gemini-3.8-flash"
 
+# 1. Trong Sidebar nút Kiểm tra:
+    if st.button("🔍 Kiểm tra API Key", use_container_width=True):
+        if not api_key:
+            st.error("Chưa nhập API Key!")
+        else:
+            with st.spinner("Đang kiểm tra kết nối với gemini-3.8-flash..."):
+                try:
+                    client = genai.Client(api_key=api_key)
+                    # Test gọi 1 token cực nhẹ để xác thực
+                    res = client.models.generate_content(
+                        model=TARGET_MODEL,
+                        contents="ping"
+                    )
+                    st.success(f"✅ Kết nối thành công!\n\nModel sẵn sàng: `{TARGET_MODEL}`")
+                except Exception as e:
+                    st.error(f"❌ Lỗi xác thực Key: {e}")
+
+# 2. Thay thế toàn bộ hàm call_gemini:
+def call_gemini(prompt_text, key):
+    if not key:
+        st.error("Vui lòng nhập API Key ở thanh bên trái!")
+        return None
+    try:
+        client = genai.Client(api_key=key)
         response = client.models.generate_content(
-            model=target_model,
+            model=TARGET_MODEL,
             contents=prompt_text,
         )
-        
         if response and response.text:
             return response.text
         else:
