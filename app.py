@@ -1,8 +1,10 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
 import io
 from docx import Document
 from pptx import Presentation
+
+# (Giữ nguyên phần config trang và sidebar)
 
 st.set_page_config(
     page_title="AI Giáo Dục 7991 - Lê Minh Tuấn",
@@ -43,27 +45,20 @@ def call_gemini(prompt_text, key):
         st.error("Vui lòng nhập Google Gemini API Key vào thanh bên trái!")
         return None
     try:
-        genai.configure(api_key=key)
-        candidate_models = [
-            "gemini-1.5-flash-latest",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro-latest",
-            "gemini-1.5-pro",
-            "gemini-pro"
-        ]
+        # Khởi tạo client chuẩn của Google GenAI SDK mới
+        client = genai.Client(api_key=key.strip())
         
-        last_error = None
-        for model_name in candidate_models:
-            try:
-                model = genai.GenerativeModel(model_name)
-                response = model.generate_content(prompt_text)
-                if response and response.text:
-                    return response.text
-            except Exception as err:
-                last_error = err
-                continue
-                
-        raise last_error
+        # Gọi model gemini-1.5-flash
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt_text,
+        )
+        
+        if response and response.text:
+            return response.text
+        else:
+            st.warning("Không nhận được nội dung phản hồi từ AI.")
+            return None
     except Exception as e:
         st.error(f"Lỗi khi xử lý qua AI: {e}")
         return None
