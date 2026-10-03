@@ -1,8 +1,11 @@
 import io
-from docx import Document
-from google import genai
-from pptx import Presentation
 import streamlit as st
+from google import genai
+from docx import Document
+from pptx import Presentation
+
+# Định danh model chỉ định
+TARGET_MODEL = "gemini-3.8-flash"
 
 st.set_page_config(
     page_title="AI Giáo Dục 7991 - Lê Minh Tuấn",
@@ -16,7 +19,7 @@ st.markdown("**Tác giả:** Lê Minh Tuấn - GV")
 st.caption("Chương trình chuyển giao kỹ thuật ứng dụng AI trong GD – Tỉnh Vĩnh Long (10/2026)")
 st.divider()
 
-# Sidebar: Nhập API Key
+# Sidebar: Nhập API Key và kiểm tra
 with st.sidebar:
     st.header("⚙️ Thiết lập hệ thống")
     api_key_input = st.text_input("Nhập Google Gemini API Key:", type="password")
@@ -26,30 +29,14 @@ with st.sidebar:
         if not api_key:
             st.error("Chưa nhập API Key!")
         else:
-            with st.spinner("Đang xác thực và chọn model tối ưu..."):
+            with st.spinner("Đang ping thử tới gemini-3.8-flash..."):
                 try:
                     client = genai.Client(api_key=api_key)
-                    supported_models = [m.name for m in client.models.list()]
-                    
-                    preferred_order = [
-                        "gemini-2.5-flash",
-                        "gemini-2.0-flash",
-                        "gemini-1.5-flash",
-                        "gemini-1.5-pro"
-                    ]
-                    
-                    best_model = None
-                    for target in preferred_order:
-                        for m_name in supported_models:
-                            if target in m_name:
-                                best_model = m_name
-                                break
-                        if best_model:
-                            break
-                            
-                    target_model = best_model if best_model else (supported_models[0] if supported_models else "gemini-2.5-flash")
-                    st.session_state["active_model"] = target_model
-                    st.success(f"✅ Kết nối thành công!\n\nModel sẵn sàng: `{target_model}`")
+                    res = client.models.generate_content(
+                        model=TARGET_MODEL,
+                        contents="ping"
+                    )
+                    st.success(f"✅ Kết nối thành công!\n\nModel sẵn sàng: `{TARGET_MODEL}`")
                 except Exception as e:
                     st.error(f"❌ Lỗi xác thực Key: {e}")
 
@@ -69,33 +56,6 @@ with st.sidebar:
         value="- Nhận biết khái niệm hệ phương trình bậc nhất hai ẩn.\n- Giải được hệ phương trình bằng phương pháp thế hoặc cộng đại số."
     )
 
-def call_gemini(prompt_text, key):
-    if not key:
-        st.error("Vui lòng nhập API Key ở thanh bên trái!")
-        return None
-    try:
-        client = genai.Client(api_key=key)
-        
-        TARGET_MODEL = "gemini-3.8-flash"
-
-# 1. Trong Sidebar nút Kiểm tra:
-    if st.button("🔍 Kiểm tra API Key", use_container_width=True):
-        if not api_key:
-            st.error("Chưa nhập API Key!")
-        else:
-            with st.spinner("Đang kiểm tra kết nối với gemini-3.8-flash..."):
-                try:
-                    client = genai.Client(api_key=api_key)
-                    # Test gọi 1 token cực nhẹ để xác thực
-                    res = client.models.generate_content(
-                        model=TARGET_MODEL,
-                        contents="ping"
-                    )
-                    st.success(f"✅ Kết nối thành công!\n\nModel sẵn sàng: `{TARGET_MODEL}`")
-                except Exception as e:
-                    st.error(f"❌ Lỗi xác thực Key: {e}")
-
-# 2. Thay thế toàn bộ hàm call_gemini:
 def call_gemini(prompt_text, key):
     if not key:
         st.error("Vui lòng nhập API Key ở thanh bên trái!")
