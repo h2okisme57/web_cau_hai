@@ -1,11 +1,17 @@
 import io
+import time
 import streamlit as st
 from google import genai
 from docx import Document
 from pptx import Presentation
 
-# Định danh model chỉ định
-TARGET_MODEL = "gemini-3.8-flash"
+# Danh sách model dự phòng theo thứ tự ưu tiên nếu gặp lỗi 503 quá tải
+MODEL_CANDIDATES = [
+    "gemini-3.8-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+]
 
 st.set_page_config(
     page_title="AI Giáo Dục 7991 - Lê Minh Tuấn",
@@ -29,14 +35,15 @@ with st.sidebar:
         if not api_key:
             st.error("Chưa nhập API Key!")
         else:
-            with st.spinner("Đang ping thử tới gemini-3.8-flash..."):
+            with st.spinner("Đang ping kiểm tra kết nối với hệ thống Google..."):
                 try:
                     client = genai.Client(api_key=api_key)
+                    # Ping thử nghiệm model
                     res = client.models.generate_content(
-                        model=TARGET_MODEL,
+                        model=MODEL_CANDIDATES[0],
                         contents="ping"
                     )
-                    st.success(f"✅ Kết nối thành công!\n\nModel sẵn sàng: `{TARGET_MODEL}`")
+                    st.success(f"✅ Kết nối thành công!\n\nModel khả dụng: `{MODEL_CANDIDATES[0]}`")
                 except Exception as e:
                     st.error(f"❌ Lỗi xác thực Key: {e}")
 
@@ -62,17 +69,33 @@ def call_gemini(prompt_text, key):
         return None
     try:
         client = genai.Client(api_key=key)
-        response = client.models.generate_content(
-            model=TARGET_MODEL,
-            contents=prompt_text,
-        )
-        if response and response.text:
-            return response.text
-        else:
-            st.warning("Không có phản hồi từ mô hình.")
-            return None
+        last_error = None
+        
+        # Vòng lặp tự động chuyển sang model dự phòng nếu model trước bị 503 hoặc quá tải
+        for model_name in MODEL_CANDIDATES:
+            for retry in range(2):  # Thử lại 2 lần với mỗi model
+                try:
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=prompt_text,
+                    )
+                    if response and response.text:
+                        return response.text
+                except Exception as err:
+                    last_error = err
+                    err_msg = str(err)
+                    # Nếu gặp lỗi quá tải (503 / high demand) thì tạm dừng 1s rồi thử lại
+                    if "503" in err_msg or "high demand" in err_msg.lower() or "unavailable" in err_msg.lower():
+                        time.sleep(1)
+                        continue
+                    else:
+                        break  # Nếu lỗi khác (như 404 không hỗ trợ model này), đổi ngay sang model kế tiếp
+                        
+        # Nếu tất cả các candidate đều lỗi
+        st.error(f"Lỗi khi xử lý qua AI: {last_error}")
+        return None
     except Exception as e:
-        st.error(f"Lỗi khi xử lý qua AI: {e}")
+        st.error(f"Lỗi kết nối client AI: {e}")
         return None
 
 def export_docx(title, content):
