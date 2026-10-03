@@ -1,8 +1,8 @@
-import streamlit as st
-from google import genai
 import io
 from docx import Document
+from google import genai
 from pptx import Presentation
+import streamlit as st
 
 st.set_page_config(
     page_title="AI Giáo Dục 7991 - Lê Minh Tuấn",
@@ -16,14 +16,12 @@ st.markdown("**Tác giả:** Lê Minh Tuấn - GV")
 st.caption("Chương trình chuyển giao kỹ thuật ứng dụng AI trong GD – Tỉnh Vĩnh Long (10/2026)")
 st.divider()
 
-# Sidebar: Nhập API Key và cấu hình bài dạy
+# Sidebar: Nhập API Key
 with st.sidebar:
     st.header("⚙️ Thiết lập hệ thống")
     api_key_input = st.text_input("Nhập Google Gemini API Key:", type="password")
     api_key = api_key_input.strip() or st.secrets.get("GEMINI_API_KEY", "").strip()
     
-    # Nút bấm xác minh API Key
-    # 1. ĐOẠN XỬ LÝ TRONG NÚT "Kiểm tra API Key":
     if st.button("🔍 Kiểm tra API Key", use_container_width=True):
         if not api_key:
             st.error("Chưa nhập API Key!")
@@ -33,12 +31,9 @@ with st.sidebar:
                     client = genai.Client(api_key=api_key)
                     supported_models = [m.name for m in client.models.list()]
                     
-                    # Ưu tiên các model thế hệ mới không bị deprecate
                     preferred_order = [
-                        "gemini-3.8-flash",
-                        "gemini-3-flash",
+                        "gemini-2.5-flash",
                         "gemini-2.0-flash",
-                        "gemini-1.5-flash-latest",
                         "gemini-1.5-flash",
                         "gemini-1.5-pro"
                     ]
@@ -52,13 +47,28 @@ with st.sidebar:
                         if best_model:
                             break
                             
-                    target_model = best_model if best_model else (supported_models[0] if supported_models else "gemini-3.8-flash")
+                    target_model = best_model if best_model else (supported_models[0] if supported_models else "gemini-2.5-flash")
                     st.session_state["active_model"] = target_model
                     st.success(f"✅ Kết nối thành công!\n\nModel sẵn sàng: `{target_model}`")
                 except Exception as e:
                     st.error(f"❌ Lỗi xác thực Key: {e}")
 
-# 2. ĐOẠN HÀM call_gemini:
+    st.divider()
+    st.header("📋 Thông tin bài học")
+    mon_hoc = st.selectbox("Môn học:", [
+        "Toán học", "Ngữ văn", "Tiếng Anh", "Khoa học tự nhiên", 
+        "Vật lí", "Hóa học", "Sinh học", "Lịch sử và Địa lí", 
+        "Lịch sử", "Địa lí", "Tin học", "Giáo dục công dân", "Công nghệ"
+    ])
+    lop = st.selectbox("Khối lớp:", [f"Lớp {i}" for i in range(6, 13)])
+    ten_bai = st.text_input("Tên bài học:", value="Hệ phương trình bậc nhất hai ẩn")
+    so_tiet = st.number_input("Thời lượng (tiết):", min_value=1, max_value=6, value=2)
+    yeu_cau_can_dat = st.text_area(
+        "Yêu cầu cần đạt (theo CT GDPT 2018):", 
+        height=100, 
+        value="- Nhận biết khái niệm hệ phương trình bậc nhất hai ẩn.\n- Giải được hệ phương trình bằng phương pháp thế hoặc cộng đại số."
+    )
+
 def call_gemini(prompt_text, key):
     if not key:
         st.error("Vui lòng nhập API Key ở thanh bên trái!")
@@ -69,10 +79,8 @@ def call_gemini(prompt_text, key):
         target_model = st.session_state.get("active_model")
         if not target_model:
             preferred_order = [
-                "gemini-3.8-flash",
-                "gemini-3-flash",
+                "gemini-2.5-flash",
                 "gemini-2.0-flash",
-                "gemini-1.5-flash-latest",
                 "gemini-1.5-flash",
                 "gemini-1.5-pro"
             ]
@@ -86,10 +94,10 @@ def call_gemini(prompt_text, key):
                     if target_model:
                         break
             except Exception:
-                target_model = "gemini-3.8-flash"
+                target_model = "gemini-2.5-flash"
                 
             if not target_model:
-                target_model = "gemini-3.8-flash"
+                target_model = "gemini-2.5-flash"
             st.session_state["active_model"] = target_model
 
         response = client.models.generate_content(
@@ -161,7 +169,7 @@ with tab1:
             - Tên bài: {ten_bai} (Thời lượng: {so_tiet} tiết)
             - Yêu cầu cần đạt: {yeu_cau_can_dat}
             
-            Khung kế hoạch bài dạy chuẩn quy định:
+            Khung kế hoạch bài dạy:
             I. MỤC TIÊU (Năng lực đặc thù, Năng lực chung, Phẩm chất)
             II. THIẾT BỊ DẠY HỌC VÀ HỌC LIỆU
             III. TIẾN TRÌNH DẠY HỌC:
