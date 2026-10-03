@@ -4,8 +4,6 @@ import io
 from docx import Document
 from pptx import Presentation
 
-# (Giữ nguyên phần config trang và sidebar)
-
 st.set_page_config(
     page_title="AI Giáo Dục 7991 - Lê Minh Tuấn",
     page_icon="🎓",
@@ -18,12 +16,44 @@ st.markdown("**Tác giả:** Lê Minh Tuấn - GV")
 st.caption("Chương trình chuyển giao kỹ thuật ứng dụng AI trong GD – Tỉnh Vĩnh Long (10/2026)")
 st.divider()
 
-# Sidebar: Nhập API Key và thông tin bài học
+# Sidebar: Nhập API Key và cấu hình bài dạy
 with st.sidebar:
     st.header("⚙️ Thiết lập hệ thống")
     api_key_input = st.text_input("Nhập Google Gemini API Key:", type="password")
     api_key = api_key_input.strip() or st.secrets.get("GEMINI_API_KEY", "").strip()
     
+    # Nút bấm xác minh API Key
+    if st.button("🔍 Kiểm tra API Key", use_container_width=True):
+        if not api_key:
+            st.error("Chưa nhập API Key!")
+        else:
+            with st.spinner("Đang xác thực và truy vấn danh sách model..."):
+                try:
+                    client = genai.Client(api_key=api_key)
+                    # Lấy danh sách model khả dụng cho key này
+                    supported_models = []
+                    for m in client.models.list():
+                        supported_models.append(m.name)
+                    
+                    if supported_models:
+                        # Tìm model tối ưu nhất trong danh sách
+                        best_model = None
+                        for pref in ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini"]:
+                            for name in supported_models:
+                                if pref in name:
+                                    best_model = name
+                                    break
+                            if best_model:
+                                break
+                        
+                        target_model = best_model if best_model else supported_models[0]
+                        st.session_state["active_model"] = target_model
+                        st.success(f"✅ Kết nối thành công!\n\nModel sẵn sàng: `{target_model}`")
+                    else:
+                        st.error("❌ Key hợp lệ nhưng không tìm thấy model khả dụng trong dự án.")
+                except Exception as e:
+                    st.error(f"❌ Lỗi xác thực Key: {e}")
+
     st.divider()
     st.header("📋 Thông tin bài học")
     mon_hoc = st.selectbox("Môn học:", [
@@ -42,22 +72,36 @@ with st.sidebar:
 
 def call_gemini(prompt_text, key):
     if not key:
-        st.error("Vui lòng nhập Google Gemini API Key vào thanh bên trái!")
+        st.error("Vui lòng nhập API Key ở thanh bên trái!")
         return None
     try:
-        # Khởi tạo client chuẩn của Google GenAI SDK mới
-        client = genai.Client(api_key=key.strip())
+        client = genai.Client(api_key=key)
         
-        # Gọi model gemini-1.5-flash
+        # Nếu chưa có model active trong session, tự động dò tìm
+        target_model = st.session_state.get("active_model")
+        if not target_model:
+            available_list = [m.name for m in client.models.list()]
+            for pref in ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini"]:
+                for name in available_list:
+                    if pref in name:
+                        target_model = name
+                        break
+                if target_model:
+                    break
+            if not target_model and available_list:
+                target_model = available_list[0]
+            st.session_state["active_model"] = target_model
+
+        # Thực thi sinh văn bản
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model=target_model,
             contents=prompt_text,
         )
         
         if response and response.text:
             return response.text
         else:
-            st.warning("Không nhận được nội dung phản hồi từ AI.")
+            st.warning("Không có phản hồi từ mô hình.")
             return None
     except Exception as e:
         st.error(f"Lỗi khi xử lý qua AI: {e}")
@@ -75,13 +119,11 @@ def export_docx(title, content):
 
 def export_pptx(title, raw_text):
     prs = Presentation()
-    # Slide bìa
     slide_layout = prs.slide_layouts[0]
     slide = prs.slides.add_slide(slide_layout)
     slide.shapes.title.text = title
     slide.placeholders[1].text = f"Môn học: {mon_hoc} - {lop}\nGiáo viên: Lê Minh Tuấn - GV"
     
-    # Slides nội dung
     slides_data = [s for s in raw_text.split("SLIDE:") if s.strip()]
     for s_text in slides_data:
         lines = [line.strip() for line in s_text.strip().split("\n") if line.strip()]
@@ -90,12 +132,9 @@ def export_pptx(title, raw_text):
         slide_title = lines[0].replace("#", "").strip()
         body_lines = lines[1:]
         
-        slide_layout = prs.slide_layouts[1]
-        new_slide = prs.slides.add_slide(slide_layout)
+        new_slide = prs.slides.add_slide(prs.slide_layouts[1])
         new_slide.shapes.title.text = slide_title
-        
-        body_shape = new_slide.placeholders[1]
-        tf = body_shape.text_frame
+        tf = new_slide.placeholders[1].text_frame
         tf.clear()
         for b_line in body_lines:
             p = tf.add_paragraph()
@@ -116,14 +155,14 @@ tab1, tab2, tab3 = st.tabs([
 with tab1:
     st.subheader("Soạn Kế hoạch bài dạy (Giáo án)")
     if st.button("🚀 Khởi tạo Kế hoạch bài dạy", key="btn_khbd"):
-        with st.spinner("Đang biên soạn KHBD theo đúng chuẩn khung văn bản Bộ GD&ĐT..."):
+        with st.spinner("Đang biên soạn Kế hoạch bài dạy..."):
             prompt_khbd = f"""
             Đóng vai trò là chuyên gia sư phạm. Hãy biên soạn Kế hoạch bài dạy chuẩn cho:
             - Môn: {mon_hoc} - {lop}
             - Tên bài: {ten_bai} (Thời lượng: {so_tiet} tiết)
             - Yêu cầu cần đạt: {yeu_cau_can_dat}
             
-            Khung kế hoạch bài dạy:
+            Khung kế hoạch bài dạy chuẩn quy định:
             I. MỤC TIÊU (Năng lực đặc thù, Năng lực chung, Phẩm chất)
             II. THIẾT BỊ DẠY HỌC VÀ HỌC LIỆU
             III. TIẾN TRÌNH DẠY HỌC:
@@ -151,14 +190,14 @@ with tab2:
     st.subheader("Tạo Slide bài giảng")
     so_slide = st.slider("Số lượng Slide:", 5, 15, 8)
     if st.button("🚀 Khởi tạo Slide bài giảng", key="btn_slide"):
-        with st.spinner("Đang cấu trúc slide trình chiếu..."):
+        with st.spinner("Đang tạo nội dung trình chiếu..."):
             prompt_slide = f"""
             Tạo cấu trúc trình chiếu PowerPoint gồm {so_slide} slide cho:
             Bài học: {ten_bai} ({mon_hoc} - {lop}).
             
             ĐỊNH DẠNG BẮT BUỘC:
             Mỗi slide bắt đầu bằng cụm từ: "SLIDE: [Tiêu đề slide]"
-            Dưới tiêu đề slide là các gạch đầu dòng súc tích, trình bày phương pháp trực quan (3-4 bullet points/slide).
+            Dưới tiêu đề slide là các gạch đầu dòng súc tích, trực quan (3-4 bullet points/slide).
             Không dùng đoạn văn dài dòng.
             """
             st.session_state["res_slide"] = call_gemini(prompt_slide, api_key)
