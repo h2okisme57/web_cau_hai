@@ -4,8 +4,10 @@ import streamlit as st
 from google import genai
 from docx import Document
 from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.dml.color import RGBColor
 
-# Danh sách model dự phòng theo thứ tự ưu tiên nếu gặp lỗi 503 quá tải
+# Danh sách model dự phòng chống 503
 MODEL_CANDIDATES = [
     "gemini-3.8-flash",
     "gemini-2.0-flash",
@@ -20,12 +22,12 @@ st.set_page_config(
 )
 
 # Header định danh tác giả
-st.markdown("## 🎓 ỨNG DỤNG AI HỖ TRỢ SOẠN GIẢNG THEO CÔNG VĂN 7991")
-st.markdown("**Tác giả:** Lê Minh Tuấn - GV")
+st.markdown("## 🎓 HỆ THỐNG TRỢ LÝ AI GIÁO DỤC TOÀN DIỆN")
+st.markdown("**Tác giả:** Lê Minh Tuấn - GV (Chuyên môn: Lịch sử & Địa lí)")
 st.caption("Chương trình chuyển giao kỹ thuật ứng dụng AI trong GD – Tỉnh Vĩnh Long (10/2026)")
 st.divider()
 
-# Sidebar: Nhập API Key và kiểm tra
+# Sidebar: Thiết lập API & Thông tin bài học
 with st.sidebar:
     st.header("⚙️ Thiết lập hệ thống")
     api_key_input = st.text_input("Nhập Google Gemini API Key:", type="password")
@@ -35,34 +37,33 @@ with st.sidebar:
         if not api_key:
             st.error("Chưa nhập API Key!")
         else:
-            with st.spinner("Đang ping kiểm tra kết nối với hệ thống Google..."):
+            with st.spinner("Đang ping thử tới máy chủ Google AI..."):
                 try:
                     client = genai.Client(api_key=api_key)
-                    # Ping thử nghiệm model
                     res = client.models.generate_content(
                         model=MODEL_CANDIDATES[0],
                         contents="ping"
                     )
-                    st.success(f"✅ Kết nối thành công!\n\nModel khả dụng: `{MODEL_CANDIDATES[0]}`")
+                    st.success(f"✅ Kết nối thành công!\n\nModel sẵn sàng: `{MODEL_CANDIDATES[0]}`")
                 except Exception as e:
                     st.error(f"❌ Lỗi xác thực Key: {e}")
 
     st.divider()
-    st.header("📋 Thông tin bài học")
+    st.header("📋 Thông tin bài dạy thực nghiệm")
     mon_hoc = st.selectbox("Môn học:", [
-        "Toán học", "Ngữ văn", "Tiếng Anh", "Khoa học tự nhiên", 
-        "Vật lí", "Hóa học", "Sinh học", "Lịch sử và Địa lí", 
-        "Lịch sử", "Địa lí", "Tin học", "Giáo dục công dân", "Công nghệ"
+        "Lịch sử và Địa lí (Lịch sử)", "Lịch sử", "Địa lí", "Toán học", 
+        "Ngữ văn", "Khoa học tự nhiên", "Tin học", "Giáo dục công dân"
     ])
-    lop = st.selectbox("Khối lớp:", [f"Lớp {i}" for i in range(6, 13)])
-    ten_bai = st.text_input("Tên bài học:", value="Hệ phương trình bậc nhất hai ẩn")
+    lop = st.selectbox("Khối lớp:", [f"Lớp {i}" for i in range(6, 13)], index=1)
+    ten_bai = st.text_input("Tên bài học:", value="Bài 2. Các cuộc phát kiến địa lí")
     so_tiet = st.number_input("Thời lượng (tiết):", min_value=1, max_value=6, value=2)
     yeu_cau_can_dat = st.text_area(
         "Yêu cầu cần đạt (theo CT GDPT 2018):", 
         height=100, 
-        value="- Nhận biết khái niệm hệ phương trình bậc nhất hai ẩn.\n- Giải được hệ phương trình bằng phương pháp thế hoặc cộng đại số."
+        value="- Trình bày được nguyên nhân và điều kiện của các cuộc phát kiến địa lí.\n- Mô tả được các cuộc phát kiến địa lí của B. Đi-a-xơ, C. Cô-lôm-bô, V. Ga-ma và Ph. Ma-gien-lan.\n- Đánh giá được tác động của các cuộc phát kiến địa lí đối với tiến trình lịch sử."
     )
 
+# Hàm gọi Gemini với cơ chế tự động chuyển model khi gặp 503
 def call_gemini(prompt_text, key):
     if not key:
         st.error("Vui lòng nhập API Key ở thanh bên trái!")
@@ -70,10 +71,8 @@ def call_gemini(prompt_text, key):
     try:
         client = genai.Client(api_key=key)
         last_error = None
-        
-        # Vòng lặp tự động chuyển sang model dự phòng nếu model trước bị 503 hoặc quá tải
         for model_name in MODEL_CANDIDATES:
-            for retry in range(2):  # Thử lại 2 lần với mỗi model
+            for retry in range(2):
                 try:
                     response = client.models.generate_content(
                         model=model_name,
@@ -83,173 +82,223 @@ def call_gemini(prompt_text, key):
                         return response.text
                 except Exception as err:
                     last_error = err
-                    err_msg = str(err)
-                    # Nếu gặp lỗi quá tải (503 / high demand) thì tạm dừng 1s rồi thử lại
-                    if "503" in err_msg or "high demand" in err_msg.lower() or "unavailable" in err_msg.lower():
+                    err_msg = str(err).lower()
+                    if "503" in err_msg or "high demand" in err_msg or "unavailable" in err_msg:
                         time.sleep(1)
                         continue
                     else:
-                        break  # Nếu lỗi khác (như 404 không hỗ trợ model này), đổi ngay sang model kế tiếp
-                        
-        # Nếu tất cả các candidate đều lỗi
+                        break
         st.error(f"Lỗi khi xử lý qua AI: {last_error}")
         return None
     except Exception as e:
         st.error(f"Lỗi kết nối client AI: {e}")
         return None
 
-def export_docx(title, content):
+# Xuất file Word (.docx)
+def export_docx(title, content, author="Lê Minh Tuấn - GV"):
     doc = Document()
     doc.add_heading(title, level=0)
-    doc.add_paragraph("Biên soạn: Lê Minh Tuấn - GV\nQuy chuẩn: Công văn số 7991/BGDĐT-GDTrH\n")
+    p = doc.add_paragraph()
+    p.add_run(f"Người thực hiện: {author}\n").bold = True
+    p.add_run("Quy chuẩn chuyên môn: Công văn 5512/BGDĐT & Công văn 7991/BGDĐT-GDTrH\n").italic = True
     for para in content.split("\n"):
         doc.add_paragraph(para)
     bio = io.BytesIO()
     doc.save(bio)
     return bio.getvalue()
 
-def export_pptx(title, raw_text):
+# Hàm xuất PowerPoint chuẩn Bài tập 3 (Có tách Speaker Notes & Phân cấp TO - VỪA - NHỎ)
+def export_advanced_pptx(title, raw_text, author):
     prs = Presentation()
+    prs.slide_width = Inches(13.333) # 16:9 widescreen
+    prs.slide_height = Inches(7.5)
+    
+    # Slide 1: Bìa
     slide_layout = prs.slide_layouts[0]
     slide = prs.slides.add_slide(slide_layout)
     slide.shapes.title.text = title
-    slide.placeholders[1].text = f"Môn học: {mon_hoc} - {lop}\nGiáo viên: Lê Minh Tuấn - GV"
+    slide.placeholders[1].text = f"Môn: {mon_hoc} - {lop}\nGiáo viên biên soạn: {author}"
     
-    slides_data = [s for s in raw_text.split("SLIDE:") if s.strip()]
-    for s_text in slides_data:
-        lines = [line.strip() for line in s_text.strip().split("\n") if line.strip()]
+    # Xử lý các slide nội dung phân tách bằng SLIDE:
+    slides_raw = [s for s in raw_text.split("SLIDE:") if s.strip()]
+    for s_item in slides_raw:
+        lines = [l.strip() for l in s_item.strip().split("\n") if l.strip()]
         if not lines:
             continue
         slide_title = lines[0].replace("#", "").strip()
-        body_lines = lines[1:]
+        body_lines = []
+        speaker_notes = []
+        is_notes = False
         
+        for l in lines[1:]:
+            if "LỜI DẪN GV:" in l.upper() or "GHI CHÚ GV:" in l.upper() or "NOTES:" in l.upper():
+                is_notes = True
+                continue
+            if is_notes:
+                speaker_notes.append(l)
+            else:
+                body_lines.append(l)
+                
+        # Tạo slide nội dung
         new_slide = prs.slides.add_slide(prs.slide_layouts[1])
         new_slide.shapes.title.text = slide_title
+        
+        # Đổ nội dung vào body
         tf = new_slide.placeholders[1].text_frame
         tf.clear()
-        for b_line in body_lines:
+        for bl in body_lines:
             p = tf.add_paragraph()
-            p.text = b_line.lstrip("-*• ")
-            p.level = 0
+            clean_text = bl.lstrip("-*• ")
+            if clean_text.startswith("TO:"):
+                p.text = clean_text.replace("TO:", "").strip()
+                p.font.size = Pt(26)
+                p.font.bold = True
+            elif clean_text.startswith("VỪA:"):
+                p.text = clean_text.replace("VỪA:", "").strip()
+                p.font.size = Pt(20)
+            elif clean_text.startswith("NHỎ:"):
+                p.text = clean_text.replace("NHỎ:", "").strip()
+                p.font.size = Pt(16)
+                p.font.italic = True
+            else:
+                p.text = clean_text
+                p.font.size = Pt(20)
+                
+        # Đổ lời dẫn giáo viên vào Speaker Notes của PowerPoint
+        if speaker_notes:
+            notes_slide = new_slide.notes_slide
+            text_frame = notes_slide.notes_text_frame
+            text_frame.text = "\n".join(speaker_notes)
             
     bio = io.BytesIO()
     prs.save(bio)
     return bio.getvalue()
 
-tab1, tab2, tab3 = st.tabs([
-    "📄 1. Kế hoạch bài dạy (CV 7991)", 
-    "🖥️ 2. Slide bài giảng (.PPTX)", 
-    "📝 3. Đề kiểm tra & Ma trận (CV 7991)"
+# Bốn phân hệ bài tập
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📄 1. Kế hoạch bài dạy (Bài tập 1)", 
+    "📝 2. Đề kiểm tra CV 7991 (Bài tập 1)",
+    "💡 3. Trợ lý Sáng kiến kinh nghiệm (Bài tập 2)",
+    "🖥️ 4. Chuyển KHBD thành Slide PPTX (Bài tập 3)"
 ])
 
 # TAB 1: KẾ HOẠCH BÀI DẠY
 with tab1:
-    st.subheader("Soạn Kế hoạch bài dạy (Giáo án)")
+    st.subheader("Soạn Kế hoạch bài dạy (Giáo án CV 5512)")
     if st.button("🚀 Khởi tạo Kế hoạch bài dạy", key="btn_khbd"):
-        with st.spinner("Đang biên soạn Kế hoạch bài dạy..."):
+        with st.spinner("Đang biên soạn KHBD theo đúng chuẩn khung văn bản Bộ GD&ĐT..."):
             prompt_khbd = f"""
             Đóng vai trò là chuyên gia sư phạm. Hãy biên soạn Kế hoạch bài dạy chuẩn cho:
             - Môn: {mon_hoc} - {lop}
             - Tên bài: {ten_bai} (Thời lượng: {so_tiet} tiết)
             - Yêu cầu cần đạt: {yeu_cau_can_dat}
             
-            Khung kế hoạch bài dạy:
+            Khung kế hoạch bài dạy chuẩn:
             I. MỤC TIÊU (Năng lực đặc thù, Năng lực chung, Phẩm chất)
             II. THIẾT BỊ DẠY HỌC VÀ HỌC LIỆU
-            III. TIẾN TRÌNH DẠY HỌC:
-            1. Hoạt động 1: Mở đầu/Khởi động (Mục tiêu, Nội dung, Sản phẩm, Tổ chức thực hiện: Chuyển giao -> Thực hiện -> Báo cáo/Thảo luận -> Kết luận/Nhận định)
-            2. Hoạt động 2: Hình thành kiến thức mới (Mục tiêu, Nội dung, Sản phẩm, Tổ chức thực hiện theo 4 bước)
-            3. Hoạt động 3: Luyện tập (Mục tiêu, Nội dung, Sản phẩm, Tổ chức thực hiện theo 4 bước)
-            4. Hoạt động 4: Vận dụng (Mục tiêu, Nội dung, Sản phẩm, Tổ chức thực hiện theo 4 bước)
-            
+            III. TIẾN TRÌNH DẠY HỌC (4 hoạt động: Khởi động, Hình thành kiến thức, Luyện tập, Vận dụng; mỗi hoạt động đủ 4 bước: Giao nhiệm vụ -> Thực hiện -> Báo cáo -> Nhận định).
             Ký tên người soạn: Lê Minh Tuấn - GV.
             """
             st.session_state["res_khbd"] = call_gemini(prompt_khbd, api_key)
             
     if st.session_state.get("res_khbd"):
         st.markdown(st.session_state["res_khbd"])
-        docx_bytes = export_docx(f"KHBD_{ten_bai}", st.session_state["res_khbd"])
-        st.download_button(
-            "📥 Tải về KHBD Word (.docx)", 
-            data=docx_bytes, 
-            file_name=f"KHBD_{ten_bai}.docx", 
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
+        docx_bytes = export_docx(f"KHBD_{ten_bai}", st.session_state["res_khbd"], "Lê Minh Tuấn - GV")
+        st.download_button("📥 Tải về KHBD Word (.docx)", data=docx_bytes, file_name=f"KHBD_LeMinhTuan.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
-# TAB 2: SLIDE BÀI GIẢNG
+# TAB 2: ĐỀ KIỂM TRA ĐỊNH KỲ THEO CÔNG VĂN 7991
 with tab2:
-    st.subheader("Tạo Slide bài giảng")
-    so_slide = st.slider("Số lượng Slide:", 5, 15, 8)
-    if st.button("🚀 Khởi tạo Slide bài giảng", key="btn_slide"):
-        with st.spinner("Đang tạo nội dung trình chiếu..."):
-            prompt_slide = f"""
-            Tạo cấu trúc trình chiếu PowerPoint gồm {so_slide} slide cho:
-            Bài học: {ten_bai} ({mon_hoc} - {lop}).
-            
-            ĐỊNH DẠNG BẮT BUỘC:
-            Mỗi slide bắt đầu bằng cụm từ: "SLIDE: [Tiêu đề slide]"
-            Dưới tiêu đề slide là các gạch đầu dòng súc tích, trực quan (3-4 bullet points/slide).
-            Không dùng đoạn văn dài dòng.
-            """
-            st.session_state["res_slide"] = call_gemini(prompt_slide, api_key)
-
-    if st.session_state.get("res_slide"):
-        st.text_area("Nội dung Slide:", value=st.session_state["res_slide"], height=250)
-        pptx_bytes = export_pptx(ten_bai, st.session_state["res_slide"])
-        st.download_button(
-            "📥 Tải về Slide PowerPoint (.pptx)", 
-            data=pptx_bytes, 
-            file_name=f"Slide_{ten_bai}.pptx", 
-            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-        )
-
-# TAB 3: ĐỀ KIỂM TRA ĐỊNH KỲ THEO CÔNG VĂN 7991
-with tab3:
     st.subheader("Tạo Ma trận, Bản đặc tả và Đề kiểm tra chuẩn CV 7991")
     col1, col2 = st.columns(2)
     with col1:
-        thoi_gian = st.selectbox("Thời lượng kiểm tra:", ["45 phút (Định kì)", "60 phút", "90 phút (Cuối kì)"])
+        thoi_gian = st.selectbox("Thời lượng kiểm tra:", ["45 phút (Định kì)", "60 phút", "90 phút"])
     with col2:
-        co_tra_loi_ngan = st.checkbox("Môn có trắc nghiệm Trả lời ngắn (Toán, KHTN, Tin...)", value=True)
+        co_tra_loi_ngan = st.checkbox("Môn có trắc nghiệm Trả lời ngắn", value=False)
 
     if st.button("🚀 Khởi tạo Ma trận & Đề kiểm tra 7991", key="btn_exam_7991"):
         with st.spinner("Đang thiết lập ma trận và đặc tả theo Công văn 7991/BGDĐT-GDTrH..."):
             prompt_7991 = f"""
-            Đóng vai trò là chuyên gia khảo thí của Bộ GDĐT. Hãy thiết kế bộ hồ sơ kiểm tra định kì chuẩn xác theo CÔNG VĂN SỐ 7991/BGDĐT-GDTrH:
-            - Môn: {mon_hoc} - {lop}
-            - Bài / Chủ đề kiểm tra: {ten_bai}
-            - Thời gian làm bài: {thoi_gian}
-            - Giáo viên thẩm định / ra đề: Lê Minh Tuấn - GV
-
-            QUY CHUẨN CÔNG VĂN 7991:
-            1. Tỉ lệ điểm định dạng câu hỏi:
-               - Phần I. Trắc nghiệm Nhiều lựa chọn: 3,0 điểm (30%).
-               - Phần II. Trắc nghiệm Đúng - Sai: 2,0 điểm (20%). Gồm các câu có 4 ý a, b, c, d (chọn Đúng hoặc Sai).
-               {"- Phần III. Trắc nghiệm Trả lời ngắn: 2,0 điểm (20%)." if co_tra_loi_ngan else "- Môn không dùng Trả lời ngắn: Chuyển toàn bộ 2,0 điểm sang dạng Đúng - Sai (Tổng Đúng-Sai 4,0 điểm)."}
-               - Phần IV. Tự luận: 3,0 điểm (30%).
-            2. Tỉ lệ mức độ nhận thức:
-               - Biết: khoảng 40% (4,0 điểm)
-               - Hiểu: khoảng 30% (3,0 điểm)
-               - Vận dụng: khoảng 30% (3,0 điểm)
-
-            XUẤT RA CHI TIẾT 4 PHẦN:
-            1. KHUNG MA TRẬN ĐỀ KIỂM TRA ĐỊNH KÌ (Vẽ bảng theo đúng mẫu Phụ lục 1 CV 7991).
-            2. BẢN ĐẶC TẢ ĐỀ KIỂM TRA ĐỊNH KÌ (Vẽ bảng theo đúng mẫu Phụ lục 2 CV 7991: TT, Chủ đề, Nội dung, Yêu cầu cần đạt, Số câu theo mức độ Biết/Hiểu/Vận dụng cho từng định dạng).
-            3. ĐỀ KIỂM TRA HOÀN CHỈNH (Trình bày rõ từng phần câu hỏi I, II, III, IV).
-            4. ĐÁP ÁN VÀ HƯỚNG DẪN CHẤM:
-               - Đáp án trắc nghiệm nhiều lựa chọn.
-               - Hướng dẫn tính điểm Đúng-Sai: 1 ý đúng = 0.1đ; 2 ý đúng = 0.25đ; 3 ý đúng = 0.5đ; 4 ý đúng = 1.0đ.
-               - Đáp án phần trả lời ngắn (nếu có).
-               - Barem điểm chi tiết cho bài Tự luận.
+            Thiết kế bộ hồ sơ kiểm tra định kì chuẩn xác theo CÔNG VĂN SỐ 7991/BGDĐT-GDTrH:
+            - Môn: {mon_hoc} - {lop} | Bài: {ten_bai} | Thời gian: {thoi_gian}
+            - Giáo viên ra đề: Lê Minh Tuấn - GV
+            - Tỉ lệ điểm: Nhiều lựa chọn 30%, Đúng - Sai 20%, {"Trả lời ngắn 20%" if co_tra_loi_ngan else "Chuyển trả lời ngắn sang Đúng-Sai 40%"}, Tự luận 30%.
+            - Tỉ lệ nhận thức: Biết 40%, Hiểu 30%, Vận dụng 30%.
+            Xuất đủ: I. Khung ma trận, II. Bản đặc tả, III. Đề bài, IV. Hướng dẫn chấm.
             """
             st.session_state["res_exam"] = call_gemini(prompt_7991, api_key)
             
     if st.session_state.get("res_exam"):
         st.markdown(st.session_state["res_exam"])
-        docx_exam_bytes = export_docx(f"De_Kiem_Tra_7991_{ten_bai}", st.session_state["res_exam"])
+        docx_exam_bytes = export_docx(f"De_Kiem_Tra_7991_{ten_bai}", st.session_state["res_exam"], "Lê Minh Tuấn - GV")
+        st.download_button("📥 Tải về Bộ Đề kiểm tra chuẩn CV 7991 (.docx)", data=docx_exam_bytes, file_name=f"De_Kiem_Tra_7991_LeMinhTuan.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+# TAB 3: TRỢ LÝ SÁNG KIẾN KINH NGHIỆM (BÀI TẬP 2)
+with tab3:
+    st.subheader("💡 Trợ lý Xây dựng Sáng kiến kinh nghiệm (SKKN)")
+    ten_skkn = st.text_input("Tên đề tài SKKN:", value="Ứng dụng Trí tuệ nhân tạo (AI) và Bản đồ số hóa trong đổi mới dạy học phân môn Lịch sử cấp THCS")
+    thuc_trang = st.text_area("Thực trạng trước khi áp dụng:", value="Học sinh học lịch sử thụ động, việc ghi nhớ các mốc niên đại và hải trình thám hiểm còn máy móc, trừu tượng.")
+    if st.button("🚀 Khởi tạo Dự thảo SKKN hoàn chỉnh", key="btn_skkn"):
+        with st.spinner("Đang xây dựng dự thảo SKKN theo thể thức chuẩn Thông tư 18/2013/TT-BKHCN..."):
+            prompt_skkn = f"""
+            Chấp bút một bản DỰ THẢO SÁNG KIẾN KINH NGHIỆM hoàn chỉnh theo quy định mẫu của Bộ GDĐT:
+            - Tên sáng kiến: {ten_skkn}
+            - Tác giả: Lê Minh Tuấn - GV | Môn: {mon_hoc}
+            - Thực trạng: {thuc_trang}
+            Gồm đủ: Đơn yêu cầu công nhận sáng kiến (Phụ lục I Thông tư 18), Lý do chọn đề tài, Mục đích, Giải pháp thực hiện chi tiết, Hiệu quả thu được (bảng đối chứng số liệu) và Bài học kinh nghiệm.
+            """
+            st.session_state["res_skkn"] = call_gemini(prompt_skkn, api_key)
+            
+    if st.session_state.get("res_skkn"):
+        st.markdown(st.session_state["res_skkn"])
+        docx_skkn = export_docx(f"SKKN_{ten_skkn[:30]}", st.session_state["res_skkn"], "Lê Minh Tuấn - GV")
+        st.download_button("📥 Tải về Bản Dự thảo SKKN (.docx)", data=docx_skkn, file_name="Du_Thao_SKKN_LeMinhTuan.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+# TAB 4: CHUYỂN KHBD THÀNH SLIDE POWERPOINT (BÀI TẬP 3 CHUYÊN SÂU)
+with tab4:
+    st.subheader("🖥️ Trợ lý Chuyển đổi KHBD thành Bộ Slide PowerPoint (.PPTX)")
+    st.caption("Thiết kế theo phân cấp TO - VỪA - NHỎ, tích hợp Lời dẫn GV và xuất file .pptx thực tế")
+    
+    # Tùy chọn nguồn dữ liệu KHBD
+    source_choice = st.radio("Chọn nguồn Kế hoạch bài dạy:", ["Sử dụng KHBD đã tạo ở Tab 1", "Nhập / Dán nội dung KHBD thủ công"], horizontal=True)
+    
+    khbd_input_text = ""
+    if source_choice == "Sử dụng KHBD đã tạo ở Tab 1":
+        khbd_input_text = st.session_state.get("res_khbd", "")
+        if not khbd_input_text:
+            st.info("💡 Bạn chưa bấm tạo ở Tab 1, hệ thống sẽ sử dụng tóm tắt thông tin bài học bên trái.")
+            khbd_input_text = f"Môn: {mon_hoc} - {lop}. Bài học: {ten_bai}. Thời lượng: {so_tiet} tiết. Yêu cầu cần đạt: {yeu_cau_can_dat}"
+    else:
+        khbd_input_text = st.text_area("Dán nội dung KHBD của thầy/cô vào đây:", height=200, value=f"Môn: {mon_hoc} - {lop}. Bài học: {ten_bai}. Thời lượng: {so_tiet} tiết. Yêu cầu cần đạt: {yeu_cau_can_dat}")
+
+    so_slide_target = st.slider("Số lượng Slide mục tiêu:", 6, 16, 8)
+    
+    if st.button("🚀 Chuyển đổi KHBD thành Bộ Slide PPTX", type="primary", key="btn_run_bt3"):
+        with st.spinner("AI đang phân tích tiến trình KHBD và thiết kế kịch bản trình chiếu phân cấp..."):
+            prompt_bt3 = f"""
+            ĐÓNG VAI TRÒ: Trợ lý thiết kế nội dung slide dạy học THCS–THPT Việt Nam chuyên nghiệp.
+            NHIỆM VỤ: Chuyển toàn bộ Kế hoạch bài dạy dưới đây thành kịch bản trình chiếu PowerPoint gồm {so_slide_target} slide.
+            NGƯỜI SOẠN: Lê Minh Tuấn - GV
+
+            NỘI DUNG KẾ HOẠCH BÀI DẠY:
+            \"\"\"{khbd_input_text}\"\"\"
+
+            QUY CHUẨN KỊCH BẢN BẮT BUỘC (TUÂN THỦ 100%):
+            1. Mỗi slide bắt đầu bằng: "SLIDE: [Tiêu đề ngắn gọn]"
+            2. Nội dung hiển thị trên mặt slide theo cấu trúc phân cấp:
+               - TO: [Câu hỏi, thông điệp hoặc từ khóa trọng tâm - viết hoa/chữ đậm]
+               - VỪA: [3-4 ý chính, nhiệm vụ hoặc dữ kiện thực hiện]
+               - NHỎ: [Gợi ý hình ảnh tư liệu, nguồn hoặc hướng dẫn phụ]
+            3. Dưới mỗi slide BẮT BUỘC có mục: "LỜI DẪN GV: [2-3 câu giáo viên nói để kết nối và giảng giải, không hiển thị trên slide]"
+            4. Tách biệt hoàn toàn phần chữ cho học sinh và lời dẫn cho giáo viên. Không đưa đáp án bài tập trực tiếp lên slide giao việc.
+            """
+            st.session_state["res_slide_bt3"] = call_gemini(prompt_bt3, api_key)
+
+    if st.session_state.get("res_slide_bt3"):
+        st.markdown(st.session_state["res_slide_bt3"])
+        pptx_bt3_bytes = export_advanced_pptx(ten_bai, st.session_state["res_slide_bt3"], "Lê Minh Tuấn - GV")
         st.download_button(
-            "📥 Tải về Bộ Đề kiểm tra chuẩn CV 7991 (.docx)", 
-            data=docx_exam_bytes, 
-            file_name=f"De_Kiem_Tra_7991_{ten_bai}.docx", 
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            "📥 Tải về Tệp PowerPoint Slide Bài giảng (.pptx)", 
+            data=pptx_bt3_bytes, 
+            file_name=f"Slide_{ten_bai}_LeMinhTuan.pptx", 
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
         )
