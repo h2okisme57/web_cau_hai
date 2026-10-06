@@ -5,13 +5,12 @@ from google import genai
 from docx import Document
 from pptx import Presentation
 from pptx.util import Inches, Pt
-from pptx.dml.color import RGBColor
 
-# Danh sách model dự phòng chống 503
+# Danh sách model dự phòng theo thứ tự ưu tiên nhằm tránh lỗi 503 / 404
 MODEL_CANDIDATES = [
-    "gemini-3.8-flash",
     "gemini-2.0-flash",
     "gemini-1.5-flash",
+    "gemini-3.8-flash",
     "gemini-1.5-pro",
 ]
 
@@ -33,16 +32,16 @@ with st.sidebar:
     api_key_input = st.text_input("Nhập Google Gemini API Key:", type="password")
     api_key = api_key_input.strip() or st.secrets.get("GEMINI_API_KEY", "").strip()
     
-    if st.button("🔍 Kiểm tra trạng thái AI", use_container_width=True):
+    # Nút kiểm tra API Key với cơ chế quét fallback né lỗi 503
+    if st.button("🔍 Kiểm tra API Key", use_container_width=True):
         if not api_key:
             st.error("Chưa nhập API Key!")
         else:
-            with st.spinner("Đang kiểm tra kết nối với hệ thống Google AI..."):
+            with st.spinner("Đang ping kiểm tra kết nối với hệ thống Google AI..."):
                 client = genai.Client(api_key=api_key)
                 connected_model = None
                 last_err = None
                 
-                # Thử lần lượt các model trong danh sách để né lỗi 503
                 for candidate in MODEL_CANDIDATES:
                     try:
                         res = client.models.generate_content(
@@ -60,14 +59,14 @@ with st.sidebar:
                     st.session_state["active_model"] = connected_model
                     st.success(f"✅ Kết nối thành công!\n\nModel sẵn sàng: `{connected_model}`")
                 else:
-                    st.error(f"❌ Tất cả model tạm thời quá tải hoặc lỗi: {last_err}")
+                    st.error(f"❌ Kết nối thất bại: {last_err}")
 
     st.divider()
     st.header("📋 Thông tin bài dạy thực nghiệm")
     mon_hoc = st.selectbox("Môn học:", [
         "Lịch sử và Địa lí (Lịch sử)", "Lịch sử", "Địa lí", "Toán học", 
         "Ngữ văn", "Khoa học tự nhiên", "Tin học", "Giáo dục công dân"
-    ])
+    ], index=0)
     lop = st.selectbox("Khối lớp:", [f"Lớp {i}" for i in range(6, 13)], index=1)
     ten_bai = st.text_input("Tên bài học:", value="Bài 2. Các cuộc phát kiến địa lí")
     so_tiet = st.number_input("Thời lượng (tiết):", min_value=1, max_value=6, value=2)
@@ -77,7 +76,7 @@ with st.sidebar:
         value="- Trình bày được nguyên nhân và điều kiện của các cuộc phát kiến địa lí.\n- Mô tả được các cuộc phát kiến địa lí của B. Đi-a-xơ, C. Cô-lôm-bô, V. Ga-ma và Ph. Ma-gien-lan.\n- Đánh giá được tác động của các cuộc phát kiến địa lí đối với tiến trình lịch sử."
     )
 
-# Hàm gọi Gemini với cơ chế tự động chuyển model khi gặp 503
+# Hàm gọi Gemini AI với cơ chế tự động thử lại và đổi model nếu quá tải (503)
 def call_gemini(prompt_text, key):
     if not key:
         st.error("Vui lòng nhập API Key ở thanh bên trái!")
@@ -85,7 +84,12 @@ def call_gemini(prompt_text, key):
     try:
         client = genai.Client(api_key=key)
         last_error = None
-        for model_name in MODEL_CANDIDATES:
+        
+        # Nếu đã có model test thành công trước đó thì ưu tiên dùng trước
+        active_model = st.session_state.get("active_model")
+        trial_list = [active_model] + [m for m in MODEL_CANDIDATES if m != active_model] if active_model else MODEL_CANDIDATES
+
+        for model_name in trial_list:
             for retry in range(2):
                 try:
                     response = client.models.generate_content(
@@ -93,6 +97,7 @@ def call_gemini(prompt_text, key):
                         contents=prompt_text,
                     )
                     if response and response.text:
+                        st.session_state["active_model"] = model_name
                         return response.text
                 except Exception as err:
                     last_error = err
@@ -102,6 +107,7 @@ def call_gemini(prompt_text, key):
                         continue
                     else:
                         break
+                        
         st.error(f"Lỗi khi xử lý qua AI: {last_error}")
         return None
     except Exception as e:
@@ -121,7 +127,7 @@ def export_docx(title, content, author="Lê Minh Tuấn - GV"):
     doc.save(bio)
     return bio.getvalue()
 
-# Hàm xuất PowerPoint chuẩn Bài tập 3 (Có tách Speaker Notes & Phân cấp TO - VỪA - NHỎ)
+# Hàm xuất PowerPoint chuẩn Bài tập 3 (TO - VỪA - NHỎ + Speaker Notes)
 def export_advanced_pptx(title, raw_text, author):
     prs = Presentation()
     prs.slide_width = Inches(13.333) # 16:9 widescreen
@@ -131,9 +137,9 @@ def export_advanced_pptx(title, raw_text, author):
     slide_layout = prs.slide_layouts[0]
     slide = prs.slides.add_slide(slide_layout)
     slide.shapes.title.text = title
-    slide.placeholders[1].text = f"Môn: {mon_hoc} - {lop}\nGiáo viên biên soạn: {author}"
+    slide.placeholders[1].text = f"Môn học: {mon_hoc} - {lop}\nGiáo viên biên soạn: {author}"
     
-    # Xử lý các slide nội dung phân tách bằng SLIDE:
+    # Tách và định dạng các slide nội dung
     slides_raw = [s for s in raw_text.split("SLIDE:") if s.strip()]
     for s_item in slides_raw:
         lines = [l.strip() for l in s_item.strip().split("\n") if l.strip()]
@@ -157,7 +163,7 @@ def export_advanced_pptx(title, raw_text, author):
         new_slide = prs.slides.add_slide(prs.slide_layouts[1])
         new_slide.shapes.title.text = slide_title
         
-        # Đổ nội dung vào body
+        # Đổ nội dung vào text frame
         tf = new_slide.placeholders[1].text_frame
         tf.clear()
         for bl in body_lines:
@@ -178,7 +184,7 @@ def export_advanced_pptx(title, raw_text, author):
                 p.text = clean_text
                 p.font.size = Pt(20)
                 
-        # Đổ lời dẫn giáo viên vào Speaker Notes của PowerPoint
+        # Tích hợp lời dẫn giáo viên vào Speaker Notes
         if speaker_notes:
             notes_slide = new_slide.notes_slide
             text_frame = notes_slide.notes_text_frame
@@ -188,7 +194,7 @@ def export_advanced_pptx(title, raw_text, author):
     prs.save(bio)
     return bio.getvalue()
 
-# Bốn phân hệ bài tập
+# Giao diện 4 Tabs nghiệp vụ
 tab1, tab2, tab3, tab4 = st.tabs([
     "📄 1. Kế hoạch bài dạy (Bài tập 1)", 
     "📝 2. Đề kiểm tra CV 7991 (Bài tập 1)",
@@ -196,7 +202,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "🖥️ 4. Chuyển KHBD thành Slide PPTX (Bài tập 3)"
 ])
 
-# TAB 1: KẾ HOẠCH BÀI DẠY
+# TAB 1: KẾ HOẠCH BÀI DẠY (CV 5512)
 with tab1:
     st.subheader("Soạn Kế hoạch bài dạy (Giáo án CV 5512)")
     if st.button("🚀 Khởi tạo Kế hoạch bài dạy", key="btn_khbd"):
@@ -210,7 +216,7 @@ with tab1:
             Khung kế hoạch bài dạy chuẩn:
             I. MỤC TIÊU (Năng lực đặc thù, Năng lực chung, Phẩm chất)
             II. THIẾT BỊ DẠY HỌC VÀ HỌC LIỆU
-            III. TIẾN TRÌNH DẠY HỌC (4 hoạt động: Khởi động, Hình thành kiến thức, Luyện tập, Vận dụng; mỗi hoạt động đủ 4 bước: Giao nhiệm vụ -> Thực hiện -> Báo cáo -> Nhận định).
+            III. TIẾN TRÌNH DẠY HỌC (Gồm 4 hoạt động: Khởi động, Hình thành kiến thức, Luyện tập, Vận dụng; mỗi hoạt động tổ chức đủ 4 bước: Giao nhiệm vụ -> Thực hiện -> Báo cáo -> Nhận định).
             Ký tên người soạn: Lê Minh Tuấn - GV.
             """
             st.session_state["res_khbd"] = call_gemini(prompt_khbd, api_key)
@@ -218,7 +224,12 @@ with tab1:
     if st.session_state.get("res_khbd"):
         st.markdown(st.session_state["res_khbd"])
         docx_bytes = export_docx(f"KHBD_{ten_bai}", st.session_state["res_khbd"], "Lê Minh Tuấn - GV")
-        st.download_button("📥 Tải về KHBD Word (.docx)", data=docx_bytes, file_name=f"KHBD_LeMinhTuan.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        st.download_button(
+            "📥 Tải về KHBD Word (.docx)", 
+            data=docx_bytes, 
+            file_name=f"KHBD_LeMinhTuan.docx", 
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
 
 # TAB 2: ĐỀ KIỂM TRA ĐỊNH KỲ THEO CÔNG VĂN 7991
 with tab2:
@@ -237,14 +248,23 @@ with tab2:
             - Giáo viên ra đề: Lê Minh Tuấn - GV
             - Tỉ lệ điểm: Nhiều lựa chọn 30%, Đúng - Sai 20%, {"Trả lời ngắn 20%" if co_tra_loi_ngan else "Chuyển trả lời ngắn sang Đúng-Sai 40%"}, Tự luận 30%.
             - Tỉ lệ nhận thức: Biết 40%, Hiểu 30%, Vận dụng 30%.
-            Xuất đủ: I. Khung ma trận, II. Bản đặc tả, III. Đề bài, IV. Hướng dẫn chấm.
+            Xuất đầy đủ 4 phần:
+            I. KHUNG MA TRẬN ĐỀ KIỂM TRA ĐỊNH KÌ (Bảng Markdown).
+            II. BẢN ĐẶC TẢ ĐỀ KIỂM TRA ĐỊNH KÌ (Có Yêu cầu cần đạt và Năng lực).
+            III. ĐỀ KIỂM TRA HOÀN CHỈNH.
+            IV. ĐÁP ÁN VÀ HƯỚNG DẪN CHẤM (Barem điểm Đúng - Sai chuẩn: đúng 1 ý=0.1đ, 2 ý=0.25đ, 3 ý=0.5đ, 4 ý=1.0đ; barem tự luận chi tiết).
             """
             st.session_state["res_exam"] = call_gemini(prompt_7991, api_key)
             
     if st.session_state.get("res_exam"):
         st.markdown(st.session_state["res_exam"])
         docx_exam_bytes = export_docx(f"De_Kiem_Tra_7991_{ten_bai}", st.session_state["res_exam"], "Lê Minh Tuấn - GV")
-        st.download_button("📥 Tải về Bộ Đề kiểm tra chuẩn CV 7991 (.docx)", data=docx_exam_bytes, file_name=f"De_Kiem_Tra_7991_LeMinhTuan.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        st.download_button(
+            "📥 Tải về Bộ Đề kiểm tra chuẩn CV 7991 (.docx)", 
+            data=docx_exam_bytes, 
+            file_name=f"De_Kiem_Tra_7991_LeMinhTuan.docx", 
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
 
 # TAB 3: TRỢ LÝ SÁNG KIẾN KINH NGHIỆM (BÀI TẬP 2)
 with tab3:
@@ -265,24 +285,28 @@ with tab3:
     if st.session_state.get("res_skkn"):
         st.markdown(st.session_state["res_skkn"])
         docx_skkn = export_docx(f"SKKN_{ten_skkn[:30]}", st.session_state["res_skkn"], "Lê Minh Tuấn - GV")
-        st.download_button("📥 Tải về Bản Dự thảo SKKN (.docx)", data=docx_skkn, file_name="Du_Thao_SKKN_LeMinhTuan.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        st.download_button(
+            "📥 Tải về Bản Dự thảo SKKN (.docx)", 
+            data=docx_skkn, 
+            file_name="Du_Thao_SKKN_LeMinhTuan.docx", 
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
 
 # TAB 4: CHUYỂN KHBD THÀNH SLIDE POWERPOINT (BÀI TẬP 3 CHUYÊN SÂU)
 with tab4:
     st.subheader("🖥️ Trợ lý Chuyển đổi KHBD thành Bộ Slide PowerPoint (.PPTX)")
     st.caption("Thiết kế theo phân cấp TO - VỪA - NHỎ, tích hợp Lời dẫn GV và xuất file .pptx thực tế")
     
-    # Tùy chọn nguồn dữ liệu KHBD
     source_choice = st.radio("Chọn nguồn Kế hoạch bài dạy:", ["Sử dụng KHBD đã tạo ở Tab 1", "Nhập / Dán nội dung KHBD thủ công"], horizontal=True)
     
     khbd_input_text = ""
     if source_choice == "Sử dụng KHBD đã tạo ở Tab 1":
         khbd_input_text = st.session_state.get("res_khbd", "")
         if not khbd_input_text:
-            st.info("💡 Bạn chưa bấm tạo ở Tab 1, hệ thống sẽ sử dụng tóm tắt thông tin bài học bên trái.")
+            st.info("💡 Bạn chưa bấm tạo ở Tab 1, hệ thống sẽ sử dụng thông tin tóm tắt bài học bên trái.")
             khbd_input_text = f"Môn: {mon_hoc} - {lop}. Bài học: {ten_bai}. Thời lượng: {so_tiet} tiết. Yêu cầu cần đạt: {yeu_cau_can_dat}"
     else:
-        khbd_input_text = st.text_area("Dán nội dung KHBD của thầy/cô vào đây:", height=200, value=f"Môn: {mon_hoc} - {lop}. Bài học: {ten_bai}. Thời lượng: {so_tiet} tiết. Yêu cầu cần đạt: {yeu_cau_can_dat}")
+        khbd_input_text = st.text_area("Dán nội dung KHBD vào đây:", height=200, value=f"Môn: {mon_hoc} - {lop}. Bài học: {ten_bai}. Thời lượng: {so_tiet} tiết. Yêu cầu cần đạt: {yeu_cau_can_dat}")
 
     so_slide_target = st.slider("Số lượng Slide mục tiêu:", 6, 16, 8)
     
