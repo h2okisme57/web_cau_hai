@@ -33,20 +33,34 @@ with st.sidebar:
     api_key_input = st.text_input("Nhập Google Gemini API Key:", type="password")
     api_key = api_key_input.strip() or st.secrets.get("GEMINI_API_KEY", "").strip()
     
-    if st.button("🔍 Kiểm tra API Key", use_container_width=True):
+    if st.button("🔍 Kiểm tra trạng thái AI", use_container_width=True):
         if not api_key:
             st.error("Chưa nhập API Key!")
         else:
-            with st.spinner("Đang ping thử tới máy chủ Google AI..."):
-                try:
-                    client = genai.Client(api_key=api_key)
-                    res = client.models.generate_content(
-                        model=MODEL_CANDIDATES[0],
-                        contents="ping"
-                    )
-                    st.success(f"✅ Kết nối thành công!\n\nModel sẵn sàng: `{MODEL_CANDIDATES[0]}`")
-                except Exception as e:
-                    st.error(f"❌ Lỗi xác thực Key: {e}")
+            with st.spinner("Đang kiểm tra kết nối với hệ thống Google AI..."):
+                client = genai.Client(api_key=api_key)
+                connected_model = None
+                last_err = None
+                
+                # Thử lần lượt các model trong danh sách để né lỗi 503
+                for candidate in MODEL_CANDIDATES:
+                    try:
+                        res = client.models.generate_content(
+                            model=candidate,
+                            contents="ping"
+                        )
+                        if res:
+                            connected_model = candidate
+                            break
+                    except Exception as err:
+                        last_err = err
+                        continue
+                
+                if connected_model:
+                    st.session_state["active_model"] = connected_model
+                    st.success(f"✅ Kết nối thành công!\n\nModel sẵn sàng: `{connected_model}`")
+                else:
+                    st.error(f"❌ Tất cả model tạm thời quá tải hoặc lỗi: {last_err}")
 
     st.divider()
     st.header("📋 Thông tin bài dạy thực nghiệm")
