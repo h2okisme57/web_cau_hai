@@ -6,12 +6,11 @@ from docx import Document
 from pptx import Presentation
 from pptx.util import Inches, Pt
 
-# Danh sách model dự phòng chống lỗi 503 / 404
+# Danh sách model tối ưu cho API Key mới
 MODEL_CANDIDATES = [
     "gemini-2.0-flash",
+    "gemini-2.0-flash-exp",
     "gemini-1.5-flash",
-    "gemini-3.8-flash",
-    "gemini-1.5-pro",
 ]
 
 st.set_page_config(
@@ -32,7 +31,7 @@ with st.sidebar:
     api_key_input = st.text_input("Nhập Google Gemini API Key:", type="password")
     api_key = api_key_input.strip() or st.secrets.get("GEMINI_API_KEY", "").strip()
     
-    # Nút kiểm tra API Key với cơ chế quét fallback né lỗi 503
+    # Nút kiểm tra API Key
     if st.button("🔍 Kiểm tra API Key", use_container_width=True):
         if not api_key:
             st.error("Chưa nhập API Key!")
@@ -76,22 +75,27 @@ with st.sidebar:
         value="- Trình bày được nguyên nhân và điều kiện của các cuộc phát kiến địa lí.\n- Mô tả được các cuộc phát kiến địa lí của B. Đi-a-xơ, C. Cô-lôm-bô, V. Ga-ma và Ph. Ma-gien-lan.\n- Đánh giá được tác động của các cuộc phát kiến địa lí đối với tiến trình lịch sử."
     )
 
-# Hàm đọc file docx được tải lên thành text
+# Hàm đọc file docx an toàn qua BytesIO
 def read_uploaded_file(uploaded_file):
-    if uploaded_file.name.endswith(".docx"):
-        doc = Document(uploaded_file)
-        full_text = []
-        for p in doc.paragraphs:
-            if p.text.strip():
-                full_text.append(p.text)
-        for table in doc.tables:
-            for row in table.rows:
-                row_text = [cell.text.strip() for cell in row.cells if cell.text.strip()]
-                if row_text:
-                    full_text.append(" | ".join(row_text))
-        return "\n".join(full_text)
-    elif uploaded_file.name.endswith(".txt"):
-        return uploaded_file.read().decode("utf-8")
+    try:
+        if uploaded_file.name.endswith(".docx"):
+            file_bytes = io.BytesIO(uploaded_file.read())
+            doc = Document(file_bytes)
+            full_text = []
+            for p in doc.paragraphs:
+                if p.text.strip():
+                    full_text.append(p.text.strip())
+            for table in doc.tables:
+                for row in table.rows:
+                    row_text = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                    if row_text:
+                        full_text.append(" | ".join(row_text))
+            return "\n".join(full_text)
+        elif uploaded_file.name.endswith(".txt"):
+            return uploaded_file.read().decode("utf-8")
+    except Exception as e:
+        st.error(f"Lỗi khi đọc file tài liệu: {e}")
+        return ""
     return ""
 
 # Hàm gọi Gemini AI có bọc cơ chế retry và fallback model
@@ -147,7 +151,7 @@ def export_docx(title, content, author="Lê Minh Tuấn - GV"):
 # Hàm xuất PowerPoint nâng cao cho Bài 3 (TO - VỪA - NHỎ + Speaker Notes)
 def export_advanced_pptx(title, raw_text, author):
     prs = Presentation()
-    prs.slide_width = Inches(13.333) # Tỉ lệ 16:9
+    prs.slide_width = Inches(13.333) # 16:9 widescreen
     prs.slide_height = Inches(7.5)
     
     # Slide bìa
@@ -199,7 +203,7 @@ def export_advanced_pptx(title, raw_text, author):
                 p.text = clean_text
                 p.font.size = Pt(20)
                 
-        # Tích hợp lời dẫn giáo viên vào Speaker Notes của slide
+        # Tích hợp lời dẫn giáo viên vào Speaker Notes
         if speaker_notes:
             notes_slide = new_slide.notes_slide
             text_frame = notes_slide.notes_text_frame
@@ -312,7 +316,6 @@ with tab4:
     st.subheader("🖥️ Trợ lý Nạp Kế hoạch bài dạy & Chuyển đổi thành Bộ Slide (.PPTX)")
     st.caption("Tiếp nhận tệp KHBD (.docx/.txt), phân tích cấu trúc và thiết kế slide phân cấp TO - VỪA - NHỎ kèm Lời dẫn giáo viên")
     
-    # 3 phương thức cung cấp KHBD
     source_mode = st.radio(
         "Chọn phương thức nạp Kế hoạch bài dạy:", 
         ["📁 Tải lên tệp KHBD (.docx, .txt)", "✏️ Dán nội dung văn bản KHBD", "🔄 Sử dụng KHBD vừa tạo ở Tab 1"], 
