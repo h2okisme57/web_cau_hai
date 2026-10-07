@@ -6,7 +6,7 @@ from docx import Document
 from pptx import Presentation
 from pptx.util import Inches, Pt
 
-# Danh sách model dự phòng theo thứ tự ưu tiên nhằm tránh lỗi 503 / 404
+# Danh sách model dự phòng chống lỗi 503 / 404
 MODEL_CANDIDATES = [
     "gemini-2.0-flash",
     "gemini-1.5-flash",
@@ -15,7 +15,7 @@ MODEL_CANDIDATES = [
 ]
 
 st.set_page_config(
-    page_title="AI Giáo Dục 7991 - Lê Minh Tuấn",
+    page_title="AI Giáo Dục - Lê Minh Tuấn",
     page_icon="🎓",
     layout="wide"
 )
@@ -76,7 +76,25 @@ with st.sidebar:
         value="- Trình bày được nguyên nhân và điều kiện của các cuộc phát kiến địa lí.\n- Mô tả được các cuộc phát kiến địa lí của B. Đi-a-xơ, C. Cô-lôm-bô, V. Ga-ma và Ph. Ma-gien-lan.\n- Đánh giá được tác động của các cuộc phát kiến địa lí đối với tiến trình lịch sử."
     )
 
-# Hàm gọi Gemini AI với cơ chế tự động thử lại và đổi model nếu quá tải (503)
+# Hàm đọc file docx được tải lên thành text
+def read_uploaded_file(uploaded_file):
+    if uploaded_file.name.endswith(".docx"):
+        doc = Document(uploaded_file)
+        full_text = []
+        for p in doc.paragraphs:
+            if p.text.strip():
+                full_text.append(p.text)
+        for table in doc.tables:
+            for row in table.rows:
+                row_text = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                if row_text:
+                    full_text.append(" | ".join(row_text))
+        return "\n".join(full_text)
+    elif uploaded_file.name.endswith(".txt"):
+        return uploaded_file.read().decode("utf-8")
+    return ""
+
+# Hàm gọi Gemini AI có bọc cơ chế retry và fallback model
 def call_gemini(prompt_text, key):
     if not key:
         st.error("Vui lòng nhập API Key ở thanh bên trái!")
@@ -85,7 +103,6 @@ def call_gemini(prompt_text, key):
         client = genai.Client(api_key=key)
         last_error = None
         
-        # Nếu đã có model test thành công trước đó thì ưu tiên dùng trước
         active_model = st.session_state.get("active_model")
         trial_list = [active_model] + [m for m in MODEL_CANDIDATES if m != active_model] if active_model else MODEL_CANDIDATES
 
@@ -127,19 +144,19 @@ def export_docx(title, content, author="Lê Minh Tuấn - GV"):
     doc.save(bio)
     return bio.getvalue()
 
-# Hàm xuất PowerPoint chuẩn Bài tập 3 (TO - VỪA - NHỎ + Speaker Notes)
+# Hàm xuất PowerPoint nâng cao cho Bài 3 (TO - VỪA - NHỎ + Speaker Notes)
 def export_advanced_pptx(title, raw_text, author):
     prs = Presentation()
-    prs.slide_width = Inches(13.333) # 16:9 widescreen
+    prs.slide_width = Inches(13.333) # Tỉ lệ 16:9
     prs.slide_height = Inches(7.5)
     
-    # Slide 1: Bìa
+    # Slide bìa
     slide_layout = prs.slide_layouts[0]
     slide = prs.slides.add_slide(slide_layout)
     slide.shapes.title.text = title
     slide.placeholders[1].text = f"Môn học: {mon_hoc} - {lop}\nGiáo viên biên soạn: {author}"
     
-    # Tách và định dạng các slide nội dung
+    # Xử lý các slide nội dung
     slides_raw = [s for s in raw_text.split("SLIDE:") if s.strip()]
     for s_item in slides_raw:
         lines = [l.strip() for l in s_item.strip().split("\n") if l.strip()]
@@ -159,11 +176,9 @@ def export_advanced_pptx(title, raw_text, author):
             else:
                 body_lines.append(l)
                 
-        # Tạo slide nội dung
         new_slide = prs.slides.add_slide(prs.slide_layouts[1])
         new_slide.shapes.title.text = slide_title
         
-        # Đổ nội dung vào text frame
         tf = new_slide.placeholders[1].text_frame
         tf.clear()
         for bl in body_lines:
@@ -184,7 +199,7 @@ def export_advanced_pptx(title, raw_text, author):
                 p.text = clean_text
                 p.font.size = Pt(20)
                 
-        # Tích hợp lời dẫn giáo viên vào Speaker Notes
+        # Tích hợp lời dẫn giáo viên vào Speaker Notes của slide
         if speaker_notes:
             notes_slide = new_slide.notes_slide
             text_frame = notes_slide.notes_text_frame
@@ -194,12 +209,12 @@ def export_advanced_pptx(title, raw_text, author):
     prs.save(bio)
     return bio.getvalue()
 
-# Giao diện 4 Tabs nghiệp vụ
+# Giao diện 4 Tabs bài tập
 tab1, tab2, tab3, tab4 = st.tabs([
-    "📄 1. Kế hoạch bài dạy (Bài tập 1)", 
-    "📝 2. Đề kiểm tra CV 7991 (Bài tập 1)",
-    "💡 3. Trợ lý Sáng kiến kinh nghiệm (Bài tập 2)",
-    "🖥️ 4. Chuyển KHBD thành Slide PPTX (Bài tập 3)"
+    "📄 1. Kế hoạch bài dạy (Bài 1)", 
+    "📝 2. Đề kiểm tra CV 7991 (Bài 1)",
+    "💡 3. Trợ lý Sáng kiến kinh nghiệm (Bài 2)",
+    "🖥️ 4. Nạp KHBD xuất Slide PPTX (Bài 3)"
 ])
 
 # TAB 1: KẾ HOẠCH BÀI DẠY (CV 5512)
@@ -292,44 +307,80 @@ with tab3:
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 
-# TAB 4: CHUYỂN KHBD THÀNH SLIDE POWERPOINT (BÀI TẬP 3 CHUYÊN SÂU)
+# TAB 4: CHUYỂN KHBD THÀNH SLIDE POWERPOINT (BÀI TẬP 3 CHUYÊN SÂU - CÓ NẠP FILE)
 with tab4:
-    st.subheader("🖥️ Trợ lý Chuyển đổi KHBD thành Bộ Slide PowerPoint (.PPTX)")
-    st.caption("Thiết kế theo phân cấp TO - VỪA - NHỎ, tích hợp Lời dẫn GV và xuất file .pptx thực tế")
+    st.subheader("🖥️ Trợ lý Nạp Kế hoạch bài dạy & Chuyển đổi thành Bộ Slide (.PPTX)")
+    st.caption("Tiếp nhận tệp KHBD (.docx/.txt), phân tích cấu trúc và thiết kế slide phân cấp TO - VỪA - NHỎ kèm Lời dẫn giáo viên")
     
-    source_choice = st.radio("Chọn nguồn Kế hoạch bài dạy:", ["Sử dụng KHBD đã tạo ở Tab 1", "Nhập / Dán nội dung KHBD thủ công"], horizontal=True)
+    # 3 phương thức cung cấp KHBD
+    source_mode = st.radio(
+        "Chọn phương thức nạp Kế hoạch bài dạy:", 
+        ["📁 Tải lên tệp KHBD (.docx, .txt)", "✏️ Dán nội dung văn bản KHBD", "🔄 Sử dụng KHBD vừa tạo ở Tab 1"], 
+        horizontal=True
+    )
     
-    khbd_input_text = ""
-    if source_choice == "Sử dụng KHBD đã tạo ở Tab 1":
-        khbd_input_text = st.session_state.get("res_khbd", "")
-        if not khbd_input_text:
-            st.info("💡 Bạn chưa bấm tạo ở Tab 1, hệ thống sẽ sử dụng thông tin tóm tắt bài học bên trái.")
-            khbd_input_text = f"Môn: {mon_hoc} - {lop}. Bài học: {ten_bai}. Thời lượng: {so_tiet} tiết. Yêu cầu cần đạt: {yeu_cau_can_dat}"
-    else:
-        khbd_input_text = st.text_area("Dán nội dung KHBD vào đây:", height=200, value=f"Môn: {mon_hoc} - {lop}. Bài học: {ten_bai}. Thời lượng: {so_tiet} tiết. Yêu cầu cần đạt: {yeu_cau_can_dat}")
-
-    so_slide_target = st.slider("Số lượng Slide mục tiêu:", 6, 16, 8)
+    final_khbd_content = ""
     
-    if st.button("🚀 Chuyển đổi KHBD thành Bộ Slide PPTX", type="primary", key="btn_run_bt3"):
-        with st.spinner("AI đang phân tích tiến trình KHBD và thiết kế kịch bản trình chiếu phân cấp..."):
-            prompt_bt3 = f"""
-            ĐÓNG VAI TRÒ: Trợ lý thiết kế nội dung slide dạy học THCS–THPT Việt Nam chuyên nghiệp.
-            NHIỆM VỤ: Chuyển toàn bộ Kế hoạch bài dạy dưới đây thành kịch bản trình chiếu PowerPoint gồm {so_slide_target} slide.
-            NGƯỜI SOẠN: Lê Minh Tuấn - GV
+    if source_mode == "📁 Tải lên tệp KHBD (.docx, .txt)":
+        uploaded_doc = st.file_uploader("Chọn file Kế hoạch bài dạy từ máy tính của thầy/cô:", type=["docx", "txt"], key="uploader_khbd")
+        if uploaded_doc is not None:
+            with st.spinner("Đang trích xuất nội dung văn bản từ tệp..."):
+                final_khbd_content = read_uploaded_file(uploaded_doc)
+            if final_khbd_content:
+                st.success(f"✅ Đã nạp thành công tệp: **{uploaded_doc.name}** ({len(final_khbd_content)} ký tự)")
+                with st.expander("👁️ Xem trước nội dung đã trích xuất từ tệp"):
+                    st.text_area("Nội dung file:", value=final_khbd_content, height=180, disabled=True)
+            else:
+                st.warning("Tệp không có nội dung văn bản hoặc không đọc được.")
+                
+    elif source_mode == "✏️ Dán nội dung văn bản KHBD":
+        final_khbd_content = st.text_area(
+            "Dán toàn bộ nội dung giáo án / Kế hoạch bài dạy vào đây:",
+            height=220,
+            value=f"KẾ HOẠCH BÀI DẠY: {ten_bai}\nMôn học: {mon_hoc} - {lop}\nThời lượng: {so_tiet} tiết\nYêu cầu cần đạt: {yeu_cau_can_dat}"
+        )
+        
+    elif source_mode == "🔄 Sử dụng KHBD vừa tạo ở Tab 1":
+        final_khbd_content = st.session_state.get("res_khbd", "")
+        if final_khbd_content:
+            st.success("✅ Đã lấy thành công Kế hoạch bài dạy từ Tab 1.")
+            with st.expander("👁️ Xem lại nội dung KHBD từ Tab 1"):
+                st.markdown(final_khbd_content)
+        else:
+            st.info("💡 Bạn chưa bấm tạo ở Tab 1. Hãy bấm sang mục Dán văn bản hoặc Tải file lên.")
 
-            NỘI DUNG KẾ HOẠCH BÀI DẠY:
-            \"\"\"{khbd_input_text}\"\"\"
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
+        so_slide_target = st.slider("Số lượng Slide mục tiêu:", 6, 16, 8)
+    with col_s2:
+        kieu_thiet_ke = st.selectbox("Phong cách sư phạm:", ["Chuẩn hóa bám sát tiến trình KHBD", "Tương tác phát vấn & Hoạt động nhóm", "Trực quan hóa trọng tâm"])
 
-            QUY CHUẨN KỊCH BẢN BẮT BUỘC (TUÂN THỦ 100%):
-            1. Mỗi slide bắt đầu bằng: "SLIDE: [Tiêu đề ngắn gọn]"
-            2. Nội dung hiển thị trên mặt slide theo cấu trúc phân cấp:
-               - TO: [Câu hỏi, thông điệp hoặc từ khóa trọng tâm - viết hoa/chữ đậm]
-               - VỪA: [3-4 ý chính, nhiệm vụ hoặc dữ kiện thực hiện]
-               - NHỎ: [Gợi ý hình ảnh tư liệu, nguồn hoặc hướng dẫn phụ]
-            3. Dưới mỗi slide BẮT BUỘC có mục: "LỜI DẪN GV: [2-3 câu giáo viên nói để kết nối và giảng giải, không hiển thị trên slide]"
-            4. Tách biệt hoàn toàn phần chữ cho học sinh và lời dẫn cho giáo viên. Không đưa đáp án bài tập trực tiếp lên slide giao việc.
-            """
-            st.session_state["res_slide_bt3"] = call_gemini(prompt_bt3, api_key)
+    if st.button("🚀 Bắt đầu chuyển đổi KHBD thành Bộ Slide PPTX", type="primary", key="btn_run_bt3"):
+        if not final_khbd_content.strip():
+            st.error("⚠️ Chưa có nội dung Kế hoạch bài dạy! Vui lòng tải file hoặc dán văn bản trước khi bấm.")
+        else:
+            with st.spinner("AI đang phân tích tiến trình bài dạy và thiết kế kịch bản trình chiếu phân cấp..."):
+                prompt_bt3 = f"""
+                ĐÓNG VAI TRÒ: Trợ lý thiết kế nội dung slide dạy học THCS–THPT Việt Nam chuyên nghiệp.
+                NHIỆM VỤ: Chuyển toàn bộ Kế hoạch bài dạy dưới đây thành kịch bản trình chiếu PowerPoint gồm {so_slide_target} slide.
+                GIÁO VIÊN: Lê Minh Tuấn - GV
+                PHONG CÁCH: {kieu_thiet_ke}
+
+                NỘI DUNG KẾ HOẠCH BÀI DẠY ĐƯỢC CUNG CẤP:
+                \"\"\"
+                {final_khbd_content}
+                \"\"\"
+
+                BẮT BUỘC TUÂN THỦ NGHIÊM NGẶT QUY CÁCH SLIDE:
+                1. Mỗi slide bắt đầu bằng: "SLIDE: [Tên tiêu đề slide ngắn gọn]"
+                2. Nội dung hiển thị trên mặt slide theo cấu trúc phân cấp:
+                   - TO: [Câu hỏi, thông điệp hoặc từ khóa trọng tâm - viết hoa/chữ đậm]
+                   - VỪA: [3-4 ý chính, nhiệm vụ hoặc dữ kiện thực hiện]
+                   - NHỎ: [Gợi ý hình ảnh tư liệu, nguồn hoặc hướng dẫn phụ]
+                3. Dưới mỗi slide BẮT BUỘC có mục: "LỜI DẪN GV: [2-3 câu ngắn gọn giáo viên nói khi giảng slide này, không hiển thị trên mặt slide]"
+                4. Tách biệt hoàn toàn phần chữ cho học sinh và lời dẫn cho giáo viên. Không đưa đáp án bài tập trực tiếp lên slide giao việc.
+                """
+                st.session_state["res_slide_bt3"] = call_gemini(prompt_bt3, api_key)
 
     if st.session_state.get("res_slide_bt3"):
         st.markdown(st.session_state["res_slide_bt3"])
