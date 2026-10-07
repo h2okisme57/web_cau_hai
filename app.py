@@ -1,6 +1,7 @@
 import io
 import time
 import zipfile
+import re
 import xml.etree.ElementTree as ET
 import streamlit as st
 from google import genai
@@ -189,58 +190,84 @@ def export_docx(title, content, author="Lê Minh Tuấn - GV"):
 # Hàm xuất PowerPoint cho Bài 3 (TO - VỪA - NHỎ + Speaker Notes)
 def export_advanced_pptx(title, raw_text, author):
     prs = Presentation()
-    prs.slide_width = Inches(13.333) # 16:9
+    prs.slide_width = Inches(13.333) # Chuẩn màn hình 16:9
     prs.slide_height = Inches(7.5)
     
-    # Slide bìa
+    # 1. Slide bìa
     slide_layout = prs.slide_layouts[0]
     slide = prs.slides.add_slide(slide_layout)
-    slide.shapes.title.text = title
+    slide.shapes.title.text = title.replace("**", "").replace("#", "").strip()
     slide.placeholders[1].text = f"Môn học: {mon_hoc} - {lop}\nGiáo viên biên soạn: {author}"
     
-    # Xử lý các slide nội dung
-    slides_raw = [s for s in raw_text.split("SLIDE:") if s.strip()]
-    for s_item in slides_raw:
-        lines = [l.strip() for l in s_item.strip().split("\n") if l.strip()]
+    # 2. Tách slide linh hoạt bằng Regex (bắt được cả '### SLIDE 1:', '**SLIDE 2**', 'SLIDE:')
+    slide_blocks = re.split(r'(?:#{1,4}\s*)?(?:\*\*)?SLIDE\s*\d*[:\-–]?', raw_text, flags=re.IGNORECASE)
+    
+    for block in slide_blocks:
+        block = block.strip()
+        if not block:
+            continue
+            
+        # Bỏ qua đoạn giới thiệu mở đầu của AI nếu không chứa nội dung slide
+        if "dưới đây là kịch bản" in block.lower() or "powerpoint" in block.lower() and len(block) < 150:
+            if not any(k in block.upper() for k in ["TO:", "VỪA:", "NHỎ:"]):
+                continue
+
+        lines = [l.strip() for l in block.split("\n") if l.strip()]
         if not lines:
             continue
-        slide_title = lines[0].replace("#", "").strip()
+            
+        # Dòng đầu tiên là tiêu đề slide (làm sạch ký tự markdown)
+        slide_title = re.sub(r'[*#_]', '', lines[0]).strip()
         body_lines = []
         speaker_notes = []
         is_notes = False
         
         for l in lines[1:]:
-            if "LỜI DẪN GV:" in l.upper() or "GHI CHÚ GV:" in l.upper() or "NOTES:" in l.upper():
-                is_notes = True
+            clean_l = re.sub(r'[*#_]', '', l).strip()
+            if not clean_l:
                 continue
-            if is_notes:
-                speaker_notes.append(l)
-            else:
-                body_lines.append(l)
+            if any(k in clean_l.upper() for k in ["LỜI DẪN GV:", "GHI CHÚ GV:", "NOTES:"]):
+                is_notes = True
+                clean_l = re.sub(r'^(LỜI DẪN GV|GHI CHÚ GV|NOTES)[:\-–]\s*', '', clean_l, flags=re.IGNORECASE)
+                if clean_l:
+                    speaker_notes.append(clean_l)
+                continue
                 
+            if is_notes:
+                speaker_notes.append(clean_l)
+            else:
+                body_lines.append(clean_l)
+                
+        # Khởi tạo Slide nội dung chuẩn (Title and Content layout)
         new_slide = prs.slides.add_slide(prs.slide_layouts[1])
         new_slide.shapes.title.text = slide_title
         
         tf = new_slide.placeholders[1].text_frame
         tf.clear()
+        
         for bl in body_lines:
+            bl_clean = bl.lstrip("-•* ")
+            if not bl_clean:
+                continue
             p = tf.add_paragraph()
-            clean_text = bl.lstrip("-*• ")
-            if clean_text.startswith("TO:"):
-                p.text = clean_text.replace("TO:", "").strip()
-                p.font.size = Pt(26)
+            
+            # Phân cấp cỡ chữ theo tiêu chuẩn TO - VỪA - NHỎ
+            if bl_clean.upper().startswith("TO:"):
+                p.text = re.sub(r'^TO[:\-–]\s*', '', bl_clean, flags=re.IGNORECASE)
+                p.font.size = Pt(24)
                 p.font.bold = True
-            elif clean_text.startswith("VỪA:"):
-                p.text = clean_text.replace("VỪA:", "").strip()
-                p.font.size = Pt(20)
-            elif clean_text.startswith("NHỎ:"):
-                p.text = clean_text.replace("NHỎ:", "").strip()
-                p.font.size = Pt(16)
+            elif bl_clean.upper().startswith("VỪA:"):
+                p.text = re.sub(r'^VỪA[:\-–]\s*', '', bl_clean, flags=re.IGNORECASE)
+                p.font.size = Pt(19)
+            elif bl_clean.upper().startswith("NHỎ:"):
+                p.text = re.sub(r'^NHỎ[:\-–]\s*', '', bl_clean, flags=re.IGNORECASE)
+                p.font.size = Pt(15)
                 p.font.italic = True
             else:
-                p.text = clean_text
-                p.font.size = Pt(20)
+                p.text = bl_clean
+                p.font.size = Pt(19)
                 
+        # Đổ lời dẫn giáo viên vào Speaker Notes của slide
         if speaker_notes:
             notes_slide = new_slide.notes_slide
             text_frame = notes_slide.notes_text_frame
@@ -249,7 +276,6 @@ def export_advanced_pptx(title, raw_text, author):
     bio = io.BytesIO()
     prs.save(bio)
     return bio.getvalue()
-
 # Giao diện 4 Tabs bài tập
 tab1, tab2, tab3, tab4 = st.tabs([
     "📄 1. Kế hoạch bài dạy (Bài 1)", 
