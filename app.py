@@ -12,8 +12,8 @@ from pptx.util import Inches, Pt
 # Danh sách model theo thứ tự ưu tiên
 MODEL_CANDIDATES = [
     "gemini-2.0-flash",
-    "gemini-2.0-flash-exp",
     "gemini-1.5-flash",
+    "gemini-2.5-flash",
     "gemini-3.8-flash",
 ]
 
@@ -130,43 +130,37 @@ def call_gemini(prompt_text, key):
         return None
     try:
         client = genai.Client(api_key=key.strip())
+        last_error = None
         
-        # Lấy model đang active hoặc mặc định gemini-2.0-flash
-        target_model = st.session_state.get("active_model", "gemini-2.0-flash")
-        
-        for retry in range(2):
+        # Thử lần lượt các model trong danh sách, nếu gặp 429 hoặc 503 thì tự động đổi sang model khác
+        for model_name in MODEL_CANDIDATES:
             try:
                 response = client.models.generate_content(
-                    model=target_model,
+                    model=model_name,
                     contents=prompt_text,
                 )
-                
-                # Cách 1: Lấy trực tiếp qua response.text
                 if response and hasattr(response, "text") and response.text:
+                    st.session_state["active_model"] = model_name
                     return response.text
-                
-                # Cách 2: Fallback bóc tách từ candidates nếu response.text bị rỗng
                 if response and response.candidates:
-                    candidate = response.candidates[0]
-                    if candidate.content and candidate.content.parts:
-                        parts_text = "".join([p.text for p in candidate.content.parts if hasattr(p, "text") and p.text])
-                        if parts_text.strip():
-                            return parts_text
-                    
-                    # Nếu bị chặn bởi bộ lọc an toàn của Google
-                    finish_reason = getattr(candidate, "finish_reason", None)
-                    if finish_reason:
-                        st.warning(f"AI ngắt phản hồi do lý do kỹ thuật: {finish_reason}")
-                        return None
-
+                    parts_text = "".join([p.text for p in response.candidates[0].content.parts if hasattr(p, "text") and p.text])
+                    if parts_text.strip():
+                        st.session_state["active_model"] = model_name
+                        return parts_text
             except Exception as err:
+                last_error = err
                 err_msg = str(err).lower()
-                if "503" in err_msg or "high demand" in err_msg or "unavailable" in err_msg:
-                    time.sleep(2)
+                # Nếu bị hết quota (429) hoặc quá tải (503), tự động chuyển sang model kế tiếp
+                if "429" in err_msg or "resource_exhausted" in err_msg or "503" in err_msg or "unavailable" in err_msg:
                     continue
                 else:
-                    st.error(f"Lỗi API: {err}")
-                    return None
+                    continue
+
+        st.error(f"Lỗi API: {last_error}")
+        return None
+    except Exception as e:
+        st.error(f"Lỗi kết nối client AI: {e}")
+        return None
 
         st.warning("AI không trả về nội dung. Vui lòng bấm thử lại hoặc rút gọn bớt nội dung nạp vào.")
         return None
