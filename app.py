@@ -6,13 +6,6 @@ from docx import Document
 from pptx import Presentation
 from pptx.util import Inches, Pt
 
-# Danh sách model tối ưu cho API Key mới
-MODEL_CANDIDATES = [
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-exp",
-    "gemini-1.5-flash",
-]
-
 st.set_page_config(
     page_title="AI Giáo Dục - Lê Minh Tuấn",
     page_icon="🎓",
@@ -31,34 +24,37 @@ with st.sidebar:
     api_key_input = st.text_input("Nhập Google Gemini API Key:", type="password")
     api_key = api_key_input.strip() or st.secrets.get("GEMINI_API_KEY", "").strip()
     
-    # Nút kiểm tra API Key
+    # Nút kiểm tra API Key tự động dò model đang mở cho tài khoản
     if st.button("🔍 Kiểm tra API Key", use_container_width=True):
         if not api_key:
             st.error("Chưa nhập API Key!")
         else:
-            with st.spinner("Đang ping kiểm tra kết nối với hệ thống Google AI..."):
-                client = genai.Client(api_key=api_key)
-                connected_model = None
-                last_err = None
-                
-                for candidate in MODEL_CANDIDATES:
-                    try:
-                        res = client.models.generate_content(
-                            model=candidate,
-                            contents="ping"
-                        )
-                        if res:
-                            connected_model = candidate
-                            break
-                    except Exception as err:
-                        last_err = err
-                        continue
-                
-                if connected_model:
-                    st.session_state["active_model"] = connected_model
-                    st.success(f"✅ Kết nối thành công!\n\nModel sẵn sàng: `{connected_model}`")
-                else:
-                    st.error(f"❌ Kết nối thất bại: {last_err}")
+            with st.spinner("Đang truy vấn danh sách model khả dụng của tài khoản..."):
+                try:
+                    client = genai.Client(api_key=api_key)
+                    # Lấy toàn bộ model thực tế mà tài khoản được cấp quyền
+                    valid_models = []
+                    for m in client.models.list():
+                        valid_models.append(m.name)
+                    
+                    if valid_models:
+                        # Ưu tiên các model flash đời mới
+                        chosen = None
+                        for pref in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3", "gemini"]:
+                            for name in valid_models:
+                                if pref in name:
+                                    chosen = name
+                                    break
+                            if chosen:
+                                break
+                        
+                        target = chosen if chosen else valid_models[0]
+                        st.session_state["active_model"] = target
+                        st.success(f"✅ Kết nối thành công!\n\nModel sẵn sàng: `{target}`")
+                    else:
+                        st.error("❌ Key hợp lệ nhưng không tìm thấy model nào khả dụng.")
+                except Exception as e:
+                    st.error(f"❌ Lỗi xác thực: {e}")
 
     st.divider()
     st.header("📋 Thông tin bài dạy thực nghiệm")
@@ -98,41 +94,49 @@ def read_uploaded_file(uploaded_file):
         return ""
     return ""
 
-# Hàm gọi Gemini AI có bọc cơ chế retry và fallback model
+# Hàm gọi Gemini AI tự động thích ứng với model đã nhận diện
 def call_gemini(prompt_text, key):
     if not key:
         st.error("Vui lòng nhập API Key ở thanh bên trái!")
         return None
     try:
         client = genai.Client(api_key=key)
-        last_error = None
         
-        active_model = st.session_state.get("active_model")
-        trial_list = [active_model] + [m for m in MODEL_CANDIDATES if m != active_model] if active_model else MODEL_CANDIDATES
-
-        for model_name in trial_list:
-            for retry in range(2):
-                try:
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=prompt_text,
-                    )
-                    if response and response.text:
-                        st.session_state["active_model"] = model_name
-                        return response.text
-                except Exception as err:
-                    last_error = err
-                    err_msg = str(err).lower()
-                    if "503" in err_msg or "high demand" in err_msg or "unavailable" in err_msg:
-                        time.sleep(1)
-                        continue
-                    else:
+        # Lấy model đã lưu hoặc tự quét nếu chưa bấm nút kiểm tra
+        target_model = st.session_state.get("active_model")
+        if not target_model:
+            available = [m.name for m in client.models.list()]
+            for pref in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3", "gemini"]:
+                for name in available:
+                    if pref in name:
+                        target_model = name
                         break
-                        
-        st.error(f"Lỗi khi xử lý qua AI: {last_error}")
+                if target_model:
+                    break
+            if not target_model and available:
+                target_model = available[0]
+            st.session_state["active_model"] = target_model
+
+        for retry in range(2):
+            try:
+                response = client.models.generate_content(
+                    model=target_model,
+                    contents=prompt_text,
+                )
+                if response and response.text:
+                    return response.text
+            except Exception as err:
+                err_msg = str(err).lower()
+                if "503" in err_msg or "high demand" in err_msg or "unavailable" in err_msg:
+                    time.sleep(1)
+                    continue
+                else:
+                    raise err
+
+        st.warning("Không nhận được nội dung phản hồi từ AI.")
         return None
     except Exception as e:
-        st.error(f"Lỗi kết nối client AI: {e}")
+        st.error(f"Lỗi khi xử lý qua AI: {e}")
         return None
 
 # Xuất file Word (.docx)
@@ -148,10 +152,10 @@ def export_docx(title, content, author="Lê Minh Tuấn - GV"):
     doc.save(bio)
     return bio.getvalue()
 
-# Hàm xuất PowerPoint nâng cao cho Bài 3 (TO - VỪA - NHỎ + Speaker Notes)
+# Hàm xuất PowerPoint cho Bài 3 (TO - VỪA - NHỎ + Speaker Notes)
 def export_advanced_pptx(title, raw_text, author):
     prs = Presentation()
-    prs.slide_width = Inches(13.333) # 16:9 widescreen
+    prs.slide_width = Inches(13.333) # 16:9
     prs.slide_height = Inches(7.5)
     
     # Slide bìa
