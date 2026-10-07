@@ -1,10 +1,20 @@
 import io
 import time
+import zipfile
+import xml.etree.ElementTree as ET
 import streamlit as st
 from google import genai
 from docx import Document
 from pptx import Presentation
 from pptx.util import Inches, Pt
+
+# Danh sách model theo thứ tự ưu tiên
+MODEL_CANDIDATES = [
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-exp",
+    "gemini-1.5-flash",
+    "gemini-3.8-flash",
+]
 
 st.set_page_config(
     page_title="AI Giáo Dục - Lê Minh Tuấn",
@@ -29,30 +39,22 @@ with st.sidebar:
         if not api_key:
             st.error("Chưa nhập API Key!")
         else:
-            with st.spinner("Đang truy vấn danh sách model khả dụng của tài khoản..."):
+            with st.spinner("Đang kiểm tra kết nối với hệ thống Google AI..."):
                 try:
                     client = genai.Client(api_key=api_key)
-                    # Lấy toàn bộ model thực tế mà tài khoản được cấp quyền
-                    valid_models = []
-                    for m in client.models.list():
-                        valid_models.append(m.name)
-                    
-                    if valid_models:
-                        # Ưu tiên các model flash đời mới
-                        chosen = None
-                        for pref in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3", "gemini"]:
-                            for name in valid_models:
-                                if pref in name:
-                                    chosen = name
-                                    break
-                            if chosen:
+                    # Quét danh sách model được phép của tài khoản
+                    valid_models = [m.name for m in client.models.list()]
+                    chosen = None
+                    for candidate in MODEL_CANDIDATES:
+                        for m_name in valid_models:
+                            if candidate in m_name:
+                                chosen = m_name
                                 break
-                        
-                        target = chosen if chosen else valid_models[0]
-                        st.session_state["active_model"] = target
-                        st.success(f"✅ Kết nối thành công!\n\nModel sẵn sàng: `{target}`")
-                    else:
-                        st.error("❌ Key hợp lệ nhưng không tìm thấy model nào khả dụng.")
+                        if chosen:
+                            break
+                    target = chosen if chosen else (valid_models[0] if valid_models else "gemini-2.0-flash")
+                    st.session_state["active_model"] = target
+                    st.success(f"✅ Kết nối thành công!\n\nModel sẵn sàng: `{target}`")
                 except Exception as e:
                     st.error(f"❌ Lỗi xác thực: {e}")
 
@@ -71,24 +73,50 @@ with st.sidebar:
         value="- Trình bày được nguyên nhân và điều kiện của các cuộc phát kiến địa lí.\n- Mô tả được các cuộc phát kiến địa lí của B. Đi-a-xơ, C. Cô-lôm-bô, V. Ga-ma và Ph. Ma-gien-lan.\n- Đánh giá được tác động của các cuộc phát kiến địa lí đối với tiến trình lịch sử."
     )
 
-# Hàm đọc file docx an toàn qua BytesIO
+# Hàm đọc file docx có Fallback mở trực tiếp gói ZIP XML
 def read_uploaded_file(uploaded_file):
     try:
+        raw_bytes = uploaded_file.read()
         if uploaded_file.name.endswith(".docx"):
-            file_bytes = io.BytesIO(uploaded_file.read())
-            doc = Document(file_bytes)
-            full_text = []
-            for p in doc.paragraphs:
-                if p.text.strip():
-                    full_text.append(p.text.strip())
-            for table in doc.tables:
-                for row in table.rows:
-                    row_text = [cell.text.strip() for cell in row.cells if cell.text.strip()]
-                    if row_text:
-                        full_text.append(" | ".join(row_text))
-            return "\n".join(full_text)
+            # Cách 1: Dùng python-docx tiêu chuẩn
+            try:
+                doc = Document(io.BytesIO(raw_bytes))
+                full_text = []
+                for p in doc.paragraphs:
+                    if p.text.strip():
+                        full_text.append(p.text.strip())
+                for table in doc.tables:
+                    for row in table.rows:
+                        row_text = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                        if row_text:
+                            full_text.append(" | ".join(row_text))
+                extracted = "\n".join(full_text)
+                if extracted.strip():
+                    return extracted
+            except Exception:
+                pass
+
+            # Cách 2: Fallback mở thẳng package zip xml nếu content-type bị lỗi
+            try:
+                with zipfile.ZipFile(io.BytesIO(raw_bytes)) as z:
+                    # Tìm file văn bản chính của Word
+                    target_xml = None
+                    for name in z.namelist():
+                        if name.endswith("word/document.xml") or name.endswith("document.xml"):
+                            target_xml = name
+                            break
+                    if target_xml:
+                        xml_content = z.read(target_xml)
+                        tree = ET.fromstring(xml_content)
+                        # Trích xuất toàn bộ text trong thẻ w:t
+                        texts = [elem.text for elem in tree.iter() if elem.tag.endswith('t') and elem.text]
+                        return "\n".join(texts)
+            except Exception:
+                pass
+
         elif uploaded_file.name.endswith(".txt"):
-            return uploaded_file.read().decode("utf-8")
+            return raw_bytes.decode("utf-8", errors="ignore")
+
     except Exception as e:
         st.error(f"Lỗi khi đọc file tài liệu: {e}")
         return ""
@@ -102,19 +130,18 @@ def call_gemini(prompt_text, key):
     try:
         client = genai.Client(api_key=key)
         
-        # Lấy model đã lưu hoặc tự quét nếu chưa bấm nút kiểm tra
         target_model = st.session_state.get("active_model")
         if not target_model:
-            available = [m.name for m in client.models.list()]
-            for pref in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3", "gemini"]:
-                for name in available:
-                    if pref in name:
-                        target_model = name
+            valid_models = [m.name for m in client.models.list()]
+            chosen = None
+            for candidate in MODEL_CANDIDATES:
+                for m_name in valid_models:
+                    if candidate in m_name:
+                        chosen = m_name
                         break
-                if target_model:
+                if chosen:
                     break
-            if not target_model and available:
-                target_model = available[0]
+            target_model = chosen if chosen else (valid_models[0] if valid_models else "gemini-2.0-flash")
             st.session_state["active_model"] = target_model
 
         for retry in range(2):
@@ -207,7 +234,6 @@ def export_advanced_pptx(title, raw_text, author):
                 p.text = clean_text
                 p.font.size = Pt(20)
                 
-        # Tích hợp lời dẫn giáo viên vào Speaker Notes
         if speaker_notes:
             notes_slide = new_slide.notes_slide
             text_frame = notes_slide.notes_text_frame
@@ -320,6 +346,7 @@ with tab4:
     st.subheader("🖥️ Trợ lý Nạp Kế hoạch bài dạy & Chuyển đổi thành Bộ Slide (.PPTX)")
     st.caption("Tiếp nhận tệp KHBD (.docx/.txt), phân tích cấu trúc và thiết kế slide phân cấp TO - VỪA - NHỎ kèm Lời dẫn giáo viên")
     
+    # 3 phương thức cung cấp KHBD
     source_mode = st.radio(
         "Chọn phương thức nạp Kế hoạch bài dạy:", 
         ["📁 Tải lên tệp KHBD (.docx, .txt)", "✏️ Dán nội dung văn bản KHBD", "🔄 Sử dụng KHBD vừa tạo ở Tab 1"], 
@@ -333,12 +360,12 @@ with tab4:
         if uploaded_doc is not None:
             with st.spinner("Đang trích xuất nội dung văn bản từ tệp..."):
                 final_khbd_content = read_uploaded_file(uploaded_doc)
-            if final_khbd_content:
+            if final_khbd_content and final_khbd_content.strip():
                 st.success(f"✅ Đã nạp thành công tệp: **{uploaded_doc.name}** ({len(final_khbd_content)} ký tự)")
                 with st.expander("👁️ Xem trước nội dung đã trích xuất từ tệp"):
                     st.text_area("Nội dung file:", value=final_khbd_content, height=180, disabled=True)
             else:
-                st.warning("Tệp không có nội dung văn bản hoặc không đọc được.")
+                st.warning("⚠️ Không thể trích xuất văn bản từ tệp Word này (file có thể bị lỗi định dạng). Vui lòng chuyển sang tab '✏️ Dán nội dung văn bản KHBD' để dán trực tiếp!")
                 
     elif source_mode == "✏️ Dán nội dung văn bản KHBD":
         final_khbd_content = st.text_area(
@@ -363,8 +390,8 @@ with tab4:
         kieu_thiet_ke = st.selectbox("Phong cách sư phạm:", ["Chuẩn hóa bám sát tiến trình KHBD", "Tương tác phát vấn & Hoạt động nhóm", "Trực quan hóa trọng tâm"])
 
     if st.button("🚀 Bắt đầu chuyển đổi KHBD thành Bộ Slide PPTX", type="primary", key="btn_run_bt3"):
-        if not final_khbd_content.strip():
-            st.error("⚠️ Chưa có nội dung Kế hoạch bài dạy! Vui lòng tải file hoặc dán văn bản trước khi bấm.")
+        if not final_khbd_content or not final_khbd_content.strip():
+            st.error("⚠️ Chưa có nội dung Kế hoạch bài dạy! Vui lòng tải file hoặc chọn mục 'Dán nội dung' để tiếp tục.")
         else:
             with st.spinner("AI đang phân tích tiến trình bài dạy và thiết kế kịch bản trình chiếu phân cấp..."):
                 prompt_bt3 = f"""
