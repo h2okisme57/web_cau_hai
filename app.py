@@ -128,42 +128,49 @@ def call_gemini(prompt_text, key):
         st.error("Vui lòng nhập API Key ở thanh bên trái!")
         return None
     try:
-        client = genai.Client(api_key=key)
+        client = genai.Client(api_key=key.strip())
         
-        target_model = st.session_state.get("active_model")
-        if not target_model:
-            valid_models = [m.name for m in client.models.list()]
-            chosen = None
-            for candidate in MODEL_CANDIDATES:
-                for m_name in valid_models:
-                    if candidate in m_name:
-                        chosen = m_name
-                        break
-                if chosen:
-                    break
-            target_model = chosen if chosen else (valid_models[0] if valid_models else "gemini-2.0-flash")
-            st.session_state["active_model"] = target_model
-
+        # Lấy model đang active hoặc mặc định gemini-2.0-flash
+        target_model = st.session_state.get("active_model", "gemini-2.0-flash")
+        
         for retry in range(2):
             try:
                 response = client.models.generate_content(
                     model=target_model,
                     contents=prompt_text,
                 )
-                if response and response.text:
+                
+                # Cách 1: Lấy trực tiếp qua response.text
+                if response and hasattr(response, "text") and response.text:
                     return response.text
+                
+                # Cách 2: Fallback bóc tách từ candidates nếu response.text bị rỗng
+                if response and response.candidates:
+                    candidate = response.candidates[0]
+                    if candidate.content and candidate.content.parts:
+                        parts_text = "".join([p.text for p in candidate.content.parts if hasattr(p, "text") and p.text])
+                        if parts_text.strip():
+                            return parts_text
+                    
+                    # Nếu bị chặn bởi bộ lọc an toàn của Google
+                    finish_reason = getattr(candidate, "finish_reason", None)
+                    if finish_reason:
+                        st.warning(f"AI ngắt phản hồi do lý do kỹ thuật: {finish_reason}")
+                        return None
+
             except Exception as err:
                 err_msg = str(err).lower()
                 if "503" in err_msg or "high demand" in err_msg or "unavailable" in err_msg:
-                    time.sleep(1)
+                    time.sleep(2)
                     continue
                 else:
-                    raise err
+                    st.error(f"Lỗi API: {err}")
+                    return None
 
-        st.warning("Không nhận được nội dung phản hồi từ AI.")
+        st.warning("AI không trả về nội dung. Vui lòng bấm thử lại hoặc rút gọn bớt nội dung nạp vào.")
         return None
     except Exception as e:
-        st.error(f"Lỗi khi xử lý qua AI: {e}")
+        st.error(f"Lỗi kết nối client AI: {e}")
         return None
 
 # Xuất file Word (.docx)
